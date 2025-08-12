@@ -1,0 +1,2150 @@
+# Normativa Desarrollo Procesos Data & Analytics
+
+Este documento persigue estandarizar la construcción de piezas de software que permitan realizar distintas acciones según las necesidades de las diversas unidades de negocio. El enfoque principal es normar las construcciones que se realicen en Teradata, en la malla de Airflow y así lograr una performance óptima de los procesos y una mejor mantención de los mismos, facilitando su lectura y mantención y/u optimización. Del mismo modo también se listan los lineamientos respecto a la nomenclatura de los distintos objetos a desarrollar.
+
+La documentación consta de los siguientes apartados:
+
+# 1.- Sobre Teradata y sus Bteqs
+
+Estas indicaciones serán adicionales a las que ya existen en la normativa oficial de Teradata para realizar queries optimizadas. Con el fin de dar énfasis a ciertas recomendaciones del documento de normativa (Gerencia Técnica de Mantención de datos Versión No. 1.2 27/09/2019 Páginas 7,8, etc.) es que se han vuelto a incluir en este documento.
+
+# 1.1.- Acerca de la Confección de BTEQs
+
+# 1.1.1.- Organización y máximo de líneas de BTEQs
+
+Las BTEQs deben organizarse de forma tal que por cada script se trabaje con un solo concepto de Negocio/Extracción y deben conformarse por un número razonable de líneas, dentro del orden máximo de 1000 líneas.
+
+Ejemplo
+
+- Público objetivo
+- Cálculo de variables demográficas
+- Cálculo de variables de producto
+- Aplicar reglas de negocio
+- Aplicar saturación
+- Unión de universo
+- Construcción tabla de salida
+
+Si la BTEQ es pequeña, dentro del mismo archivo .sql deben ir separados estos conceptos o áreas, para tener claridad en una eventual mantención.
+
+# 1.1.2.- Nombres de BTEQs
+
+Las BTEQs deben llevar como prefijo un número correlativo que indique el orden de ejecución en el DAG.
+
+Ejemplo Secuencial
+
+- 000_Creacion_Tablas_Historicas
+- 001_Construccion_Universo_Pyme
+- 002_Tenencia_Producto_Pyme
+
+Ejemplo Paralelo
+
+- 000_Creacion_Tablas_Historicas
+- 001_Creacion_Ruteo
+- 002_A_Variables_Demograficas
+- 002_B_Variables_Deuda
+
+# 1.1.3.- Encabezado de BTEQ
+
+Toda BTEQ debe iniciar con un encabezado que cumpla con las siguientes características:
+
+- Descripción a nivel de negocio de lo que hace el script.
+- Autor, conformado por Nombre y Apellido, no se debe colocar iniciales o nombres de usuario.
+- Fecha de creación del script.
+- En caso de ser una mantención agregar un bloque comentado explicando en qué consiste la mantención realizada, el autor con el formato del punto 22.b, y la fecha que se realizó dicha mantención.
+- Se deben especificar todas las tablas de entrada del proceso, estas tablas son aquellas fuentes que no se generan en el propio script. Se debe validar que todas las tablas del encabezado se estén usando en el script y que todas las tablas del script se encuentren en el encabezado.
+- Se debe especificar la o las tablas de salida del proceso, con la correcta nomenclatura.
+
+Lo correcto:
+
+/******************************************************************************************
+*******************************************************************************************
+** DSCRPCN: SELECCION DE UNIVERSO INICIAL PARA JOURNEY LEAKAGE RESCATES                      **
+**           UNIVERSO INICIAL CONSISTENTE EN CLIENTES QUE ESTAN EN EL MODELO ANALITICO       **
+**                                                                                           **
+** AUTOR  : MIGUEL CHAMPIN                                                                   **
+** FECHA  : 01/2023                                                                          **
+******************************************************************************************/
+/******************************************************************************************
+** MANTNCN:                                                                                  **
+** AUTOR  :                                                                                  **
+** FECHA  : SSAAMMDD                                                                         **
+******************************************************************************************
+** TABLA DE ENTRADA: MKT_CRM_ANALYTICS_TB.I_AI_FUGA_DIARIA_PRIORIZADO_HIST                   **
+**                                                                                           **
+** TABLA DE SALIDA:  {{ var.value.BD_TEMP_JOURNEY }}.P_Lk_Res_Inv_Modelo                     **
+**                   {{ var.value.BD_TEMP_JOURNEY }}.P_Lk_Res_Inv_Universo_Inicial           **
+**                                                                                           **
+*******************************************************************************************
+******************************************************************************************/
+
+# 1.1.4.- Sentencias de Inicio y Fin de BTEQ
+
+Se deben agregar las siguientes sentencias dentro de la BTEQ:
+
+| Al inicio de la BTEQ:         | Al final de la BTEQ: |
+| ----------------------------- | -------------------- |
+| .SET SESSION CHARSET 'UTF-8'; | SELECT DATE, TIME;   |
+| SELECT DATE, TIME;            | .LOGOFF;             |
+|                               | .QUIT 0;             |
+
+Esto es para poder ver el tiempo real de ejecución de un script completo, de esta manera podemos analizar si la performance de un proceso podría o no afectar el rendimiento de la maquina y/o los procesos que ya están en producción.
+
+# 1.1.5.- Comentarios de Encabezado
+
+Los comentarios del encabezado que describen el proceso deben ser a nivel de una descripción de negocio que explique claramente de qué se trata el proceso en cuestión. No deben ser comentarios genéricos.
+
+Lo que no se debe usar:
+
+/******************************************************************************************
+**                                CARGA DE DATOS A MKTC                                      **
+******************************************************************************************/
+
+Lo correcto:
+
+/******************************************************************************************
+**        CARGA DE CLIENTES CUENTACORRENTISTA CON BCIPASS HABILITADO A MKTC                  **
+******************************************************************************************/
+
+# 1.1.6.- Comentarios de Sentencias
+
+Los comentarios de las sentencias SQL deben describir a nivel de negocio y no técnico dicha sentencia.
+
+Lo que no se debe hacer:
+Lo correcto:
+
+Adicionalmente, se permite el uso de comentarios dentro de líneas de código siempre y cuando contribuyan a una explicación a nivel de negocio:
+
+Ejemplo
+
+1  WHERE NOT(IA.Ic_Origen_Fuga='DAP')   --Clientes cuyo origen de fuga no sea Deposito a Plazo
+
+# 1.1.7.- Creación de Tablas Temporales
+
+La creación debe ser explícita, es decir, definir todos sus campos e índice primario.
+
+No se permite la creación implícita mediante la sentencia CREATE AS SELECT.
+
+El nombre debe ser descriptivo de acuerdo a los datos que contenga.
+
+Debe realizar el DROP TABLE antes de la creación.
+
+Una vez insertados los datos en la tabla se deben colectar las estadísticas necesarias.
+
+Al finalizar el proceso la tabla temporal debe ser dropeada.
+
+Ver nomenclatura punto 6.6 para nombrar las tablas en cuestión.
+
+# 1.1.7.1.- Tablas con Prefijo T
+
+Las tablas con prefijo T (tablas temporales) deben estar siempre en esquemas temporales y deben ser eliminadas al final de la BTEQ. También deben estar en la eliminación de tablas temporales y precálculo al finalizar el DAG.
+
+Lo que no se debe hacer:
+
+1   CREATE TABLE  {{ var.value.BD_ANALYTICS }}.T_Opd_Con_1A_Consumo_Param_Fecha
+2   (
+3      Tc_Fecha_Ref CHAR(8)  CHARACTER SET LATIN   NOT CASESPECIFIC
+4      ,Tf_Fecha_Ref_Dia DATE  FORMAT 'YYYY-MM-DD'
+5   )  UNIQUE PRIMARY INDEX  (Tf_Fecha_Ref_Dia);
+
+Lo correcto:
+
+1   CREATE TABLE  {{ var.value.BD_TEMP_ANALYTICS }}.T_Opd_Con_1A_Consumo_Param_Fecha
+2   (
+3      Tc_Fecha_Ref CHAR(8)  CHARACTER SET LATIN   NOT CASESPECIFIC
+4      ,Tf_Fecha_Ref_Dia DATE  FORMAT 'YYYY-MM-DD'
+5   )  UNIQUE PRIMARY INDEX  (Tf_Fecha_Ref_Dia);
+
+No utilizar campos de tipo VARCHAR ni TIMESTAMP (fecha y hora) para definir un índice primario.
+
+# 1.1.7.2.- Tablas con Prefijo P
+
+Las tablas con prefijo P (tablas de precálculo) deben quedar en el esquema temporal y se deben eliminar al finalizar del DAG. Ver nomenclatura punto 6.6 de este apartado para nombrar las tablas P.
+
+# 1.1.8.- Sentencias SELECT
+
+Las sentencias SQL deben ser escritas de forma ordenada en líneas separadas para poder entender de forma fácil lo que se está realizando con la misma. Además, siempre deben finalizar con un punto y coma (;) para identificar el término de ésta. Tampoco se permite el uso de asterisco (*) dentro del SELECT, los campos deben ser listados de forma explícita.
+
+Lo que no se debe hacer:
+
+1  Select *  from edw_vw.agreement where   acct_status_type_cd   = 1;
+# Lo correcto:
+
+1   SELECT
+2       Account_Num AS Tc_Account_Num
+3      ,Account_Modifier_Num AS Tc_Account_Modifier_Num
+4      ,Acct_Status_Type_Cd AS Te_Acct_Status_Type_Cd
+5   FROM
+6     EDW_VW.Agreement
+7   WHERE
+8     Acct_Status_Type_Cd = 1;
+
+# 1.1.9.- Indentación
+
+Debe garantizarse una correcta indentación de las queries. Esto quiere decir lo siguiente:
+
+# a. Los campos del SELECT deben llevar una sangría.
+
+Lo que no se debe hacer:
+1   SELECT Tf_MES_INI_VIG,Te_RUT,Te_Party_Id,Tc_BANCA,
+2   Tf_INI_EJE_DEST,      Tf_FIN_EJE_DEST,
+3   FROM MKT_TMP_INPUT_TB.T_UNIV_CAMB_EJE_CONT30D;
+Lo correcto:
+1   SELECT
+2     Tf_Mes_Ini_Vig
+3     ,Te_RUT
+4     ,Te_Party_Id
+5     ,Tc_Banca
+6     ,Tf_Ini_Eje_Dest
+7     ,Tf_Fin_Eje_Dest
+8   FROM MKT_TMP_INPUT_TB.T_UNIV_CAMB_EJE_CONT30D;
+
+# b. Las comas que separan los campos del SELECT deben ir a la izquierda.
+
+Lo que no se debe hacer:
+1   SELECT
+2   Tf_Mes_Ini_Vig,
+3   Te_RUT,
+4   Te_Party_Id,
+5   Tc_Banca,
+6   Tf_Ini_Eje_Dest,
+7   Tf_Fin_Eje_Dest
+8   FROM MKT_TMP_INPUT_TB.T_UNIV_CAMB_EJE_CONT30D;
+Lo correcto:
+1   SELECT
+2     Tf_Mes_Ini_Vig
+3     ,Te_RUT
+4     ,Te_Party_Id
+5     ,Tc_Banca
+6     ,Tf_Ini_Eje_Dest
+7     ,Tf_Fin_Eje_Dest
+8   FROM MKT_TMP_INPUT_TB.T_UNIV_CAMB_EJE_CONT30D;
+
+# c. Los ON deben ir debajo del JOIN.
+
+Lo que no se debe hacer:
+1   SELECT
+2     TRF.Te_RUT_Origen            AS Te_RUT_Origen
+3     ,TRF.Te_RUT_Destino          AS Te_RUT_Destino
+4     ,PAR.Pf_Fecha_Ref_Dia        AS Pf_Fecha_Ref_Dia
+5     ,TRF.Tf_Fecha_Trf            AS Tf_Fecha_Trf
+6     ,MIN(CCT.Tf_Fecha_Apertura)  AS Tf_Fecha_Pln
+7   FROM
+8     MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO AS TRF
+9     INNER JOIN MKT_TMP_INPUT_TB.P_TPP_PARAMETRO_FECHAS   AS PAR ON TRF.Tf_Fecha_Trf  >= PAR.Pf_Fecha_Menos_12M
+10     LEFT JOIN MKT_TMP_INPUT_TB.T_PRE_TPP_TENENCIA_CTACTE   AS CCT ON TRF.Te_RUT_Destino  = CCT.Te_RUT
+11   WHERE
+# Lo correcto:
+
+SELECT
+TRF.Te_RUT_Origen           AS Te_RUT_Origen
+,TRF.Te_RUT_Destino         AS Te_RUT_Destino
+,PAR.Pf_Fecha_Ref_Dia       AS Pf_Fecha_Ref_Dia
+,TRF.Tf_Fecha_Trf           AS Tf_Fecha_Trf
+,MIN(CCT.Tf_Fecha_Apertura) AS Tf_Fecha_Pln
+FROM
+MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO AS TRF
+INNER JOIN MKT_TMP_INPUT_TB.P_TPP_PARAMETRO_FECHAS  AS PAR
+ON TRF.Tf_Fecha_Trf >= PAR.Pf_Fecha_Menos_12M
+LEFT JOIN MKT_TMP_INPUT_TB.T_PRE_TPP_TENENCIA_CTACTE  AS CCT
+ON TRF.Te_RUT_Destino = CCT.Te_RUT
+WHERE
+COALESCE(CCT.Tf_Fecha_Apertura, TRF.Tf_Fecha_Trf  + 1) > TRF.Tf_Fecha_Trf
+GROUP BY
+TRF.Te_RUT_Origen
+,TRF.Te_RUT_Destino
+,PAR.Pf_Fecha_Ref_Dia
+,TRF.Tf_Fecha_Trf;
+
+# Lo que no se debe hacer:
+
+SELECT
+UNI.Te_Per_RUT          AS Te_Per_RUT
+,UNI.Tc_Per_Dv          AS Tc_Per_Dv
+,UNI.Te_Per_Party_Id    AS Te_Per_Party_Id
+,UNI.Tc_Per_CIC         AS Tc_Per_CIC
+,UNI.Tf_Per_Fecha_Info AS Tf_Per_Fecha_Info
+,UNI.Te_Per_Cant_Con    AS Te_Per_Cant_Con
+,UNI.Te_Per_Cant_Hip    AS Te_Per_Cant_Hip
+FROM
+EDW_TEMPUSU.T_STG_PER_1A_CLI_IND_H UNI
+LEFT JOIN EDW_TEMPUSU.PBD_CLIENTES_CAMBIANTES_2 CCA
+ON UNI.Te_Per_Party_Id = CCA.Party_Id  AND CCA.Campo_Type_Cd = 20 AND CCA.Estado = 1;
+
+# Lo correcto:
+
+SELECT
+UNI.Te_Per_RUT          AS Te_Per_RUT
+,UNI.Tc_Per_Dv          AS Tc_Per_Dv
+,UNI.Te_Per_Party_Id    AS Te_Per_Party_Id
+,UNI.Tc_Per_CIC         AS Tc_Per_CIC
+,UNI.Tf_Per_Fecha_Info AS Tf_Per_Fecha_Info
+,UNI.Te_Per_Cant_Con    AS Te_Per_Cant_Con
+,UNI.Te_Per_Cant_Hip    AS Te_Per_Cant_Hip
+FROM
+EDW_TEMPUSU.T_STG_PER_1A_CLI_IND_H UNI
+LEFT JOIN EDW_TEMPUSU.PBD_CLIENTES_CAMBIANTES_2 CCA
+ON UNI.Te_Per_Party_Id = CCA.Party_Id
+AND CCA.Campo_Type_Cd = 20
+AND CCA.Estado =  1;
+
+# e.
+
+Las sentencias lógicas que van después del WHERE deben escribirse con una sangría respecto al WHERE.
+
+# Lo que no se debe hacer:
+
+WHERE
+UNI.Te_Per_Party_Id  =  CCA.Party_Id AND CCA.Campo_Type_Cd = 20 AND CCA.Estado = 1;
+
+# Lo correcto:
+
+WHERE
+UNI.Te_Per_Party_Id  =  CCA.Party_Id
+3 AND CCA.Campo_Type_Cd = 20
+
+4 AND CCA.Estado = 1;
+
+f. Los tipos de campos deben estar separados por la cantidad de sangría necesaria respecto a los nombres para que queden alineados.
+
+Lo correcto:
+
+CREATE TABLE EDW_TEMPUSU.T_STG_PER_1A_CLI_VAR_DEMO
+(
+Td_Rut           DECIMAL(8,0)
+,Tc_Banca        VARCHAR(100)   CHARACTER SET LATIN  NOT CASESPECIFIC
+,Tc_Banca_Desc   VARCHAR(100)   CHARACTER SET LATIN  NOT CASESPECIFIC
+,Tc_Segmento     VARCHAR(100)   CHARACTER SET LATIN  NOT CASESPECIFIC
+,Tc_Segmento_Desc VARCHAR(100)  CHARACTER SET LATIN  NOT CASESPECIFIC
+)  PRIMARY INDEX (Td_Rut);
+
+g. Los CASE WHEN no deben organizarse de forma horizontal cuando tienen más de una comparación lógica.
+
+Lo que no se debe hacer:
+
+SELECT
+Te_Rut                     AS Te_RUT
+,Te_Periodo_Ref            AS Te_Periodo_Ref
+,Tf_Fecha_Ref_Dia          AS Tf_Fecha_Ref_Dia
+,COUNT(1)                  AS Te_Num_Bancos
+,SUM(Td_Monto_Transf)      AS Td_Monto_Transf_1_Ano
+,MAX(Td_Max_Monto_Transf)  AS Td_Max_Monto_Transf
+,AVG(Td_Monto_Transf_Avg)  AS Td_Mto_Transf_1Ano_Prom
+,MIN(CASE WHEN Tc_Banco_Destino='BANCO DE CHILE' THEN '1-CHILE' WHEN Tc_Banco_Destino='BANCO SANTANDER-CHILE' THEN '2-SANTANDER'
+WHEN Tc_Banco_Destino='BANCO DEL ESTADO DE CHILE' THEN '3-BANCOESTADO' ELSE '4-OTROS'
+END)                      AS Tc_Banco
+FROM
+MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_01
+GROUP BY
+Te_RUT
+,Te_Periodo_Ref
+,Tf_Fecha_Ref_Dia;
+
+Lo correcto:
+
+SELECT
+Te_Rut                     AS Te_RUT
+,Te_Periodo_Ref            AS Te_Periodo_Ref
+,Tf_Fecha_Ref_Dia          AS Tf_Fecha_Ref_Dia
+,COUNT(1)                  AS Te_Num_Bancos
+,SUM(Td_Monto_Transf)      AS Td_Monto_Transf_1_Ano
+,MAX(Td_Max_Monto_Transf)  AS Td_Max_Monto_Transf
+,AVG(Td_Monto_Transf_Avg)  AS Td_Mto_Transf_1Ano_Prom
+,MIN(CASE WHEN Tc_Banco_Destino='BANCO DE CHILE'
+THEN  '1-CHILE'
+WHEN Tc_Banco_Destino='BANCO SANTANDER-CHILE'
+THEN  '2-SANTANDER'
+WHEN Tc_Banco_Destino='BANCO DEL ESTADO DE CHILE'
+THEN  '3-BANCOESTADO'
+ELSE  '4-OTROS'
+END)                      AS Tc_Banco
+FROM
+MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_01
+GROUP BY
+Te_RUT
+,Te_Periodo_Ref
+,Tf_Fecha_Ref_Dia;
+
+# 1.1.10.- Alias
+
+# 1.1.10.1- Alias de tablas
+
+Estos deben ser de 3 siglas descriptivas respecto de la tabla y deben ser utilizados tanto en tablas como en los campos.
+
+Lo que no se debe hacer:
+
+SELECT
+A.Pe_RUT           AS Td_RUT
+# 1.1.10.2- Alias de campos
+
+Deben ser iguales al nombre de los campos donde serán insertados (tabla de destino).
+
+# Lo que no se debe hacer:
+
+CREATE TABLE MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_01
+(
+Td_Rut                    DECIMAL (8,0)
+,Te_Periodo_Ref           INTEGER
+,Tf_Fecha_Ref_Dia         DATE FORMAT 'YYYY-MM-DD'
+,Te_Num_Bancos            INTEGER
+,Td_Monto_Transf_1_Ano    DECIMAL(25,10)
+,Td_Max_Monto_Transf      DECIMAL(25,10)
+,Td_Mto_Transf_1Ano_Prom  DECIMAL(25,10)
+,Tc_Banco                 CHAR(40) CHARACTER SET LATIN NOT CASESPECIFIC
+)  PRIMARY INDEX (Td_RUT, Tf_Fecha_Ref_Dia, Te_Periodo_Ref);
+.IF ERRORCODE <> 0 THEN .QUIT 25;
+
+SELECT
+Te_Rut
+,Te_Periodo_Ref
+,Tf_Fecha_Ref_Dia
+,COUNT(1)
+,SUM(Td_Monto_Transf)
+,MAX(Td_Max_Monto_Transf)
+,AVG(Td_Monto_Transf_Avg)
+,MIN(CASE WHEN Tc_Banco_Destino='BANCO DE CHILE'
+THEN  '1-CHILE'
+WHEN Tc_Banco_Destino='BANCO SANTANDER-CHILE'
+THEN  '2-SANTANDER'
+WHEN Tc_Banco_Destino='BANCO DEL ESTADO DE CHILE'
+THEN  '3-BANCOESTADO'
+ELSE  '4-OTROS'
+END)
+
+# Lo correcto:
+
+SELECT
+POB.Pe_RUT             AS Td_RUT
+,POB.Pe_Periodo_Ref    AS Te_Periodo_Ref
+,POB.Pf_Fecha_Ref_Dia  AS Tf_Fecha_Ref_Dia
+,TRF.Te_RUT_Origen     AS Te_RUT_Origen
+,COUNT(1)              AS Te_Cantidad_Trf
+FROM
+MKT_TMP_INPUT_TB.P_TPP_PUBLICO_OBJETIVO AS POB
+INNER JOIN MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO AS TRF
+ON POB.Pe_Rut = TRF.Te_Rut_Destino
+GROUP BY
+POB.Pe_Rut
+,POB.Pe_Periodo_Ref
+,POB.Pf_Fecha_Ref_Dia
+,TRF.Te_RUT_Origen;
+# 5
+
+| Tf\_Fecha\_Ref\_Dia         | DATE FORMAT 'YYYY-MM-DD'                      |
+| --------------------------- | --------------------------------------------- |
+| Te\_Num\_Bancos             | INTEGER                                       |
+| Td\_Monto\_Transf\_1\_Ano   | DECIMAL(25,10)                                |
+| Td\_Max\_Monto\_Transf      | DECIMAL(25,10)                                |
+| Td\_Mto\_Transf\_1Ano\_Prom | DECIMAL(25,10)                                |
+| Tc\_Banco                   | CHAR(40) CHARACTER SET LATIN NOT CASESPECIFIC |
+
+PRIMARY INDEX (Td_RUT, Tf_Fecha_Ref_Dia, Te_Periodo_Ref);
+
+.IF ERRORCODE &lt;&gt; 0 THEN .QUIT 25;
+
+# 15
+
+SELECT
+
+- Te_Rut AS Te_RUT
+- Te_Periodo_Ref AS Te_Periodo_Ref
+- Tf_Fecha_Ref_Dia AS Tf_Fecha_Ref_Dia
+- COUNT(1) AS Te_Num_Bancos
+- SUM(Td_Monto_Transf) AS Td_Monto_Transf_1_Ano
+- MAX(Td_Max_Monto_Transf) AS Td_Max_Monto_Transf
+- AVG(Td_Monto_Transf_Avg) AS Td_Mto_Transf_1Ano_Prom
+- MIN(CASE WHEN Tc_Banco_Destino='BANCO DE CHILE' THEN '1-CHILE' WHEN Tc_Banco_Destino='BANCO SANTANDER-CHILE' THEN '2-SANTANDER' WHEN Tc_Banco_Destino='BANCO DEL ESTADO DE CHILE' THEN '3-BANCOESTADO' ELSE '4-OTROS' END) AS Tc_Banco
+
+# 1.1.11.- Campos dentro de GROUP BY
+
+Los campos dentro del GROUP BY deben ser nombrados y no numerados
+
+Lo que no se debe hacer:
+
+# 1
+
+SELECT
+
+- a.Td_RUT
+- a.Tf_Fecha_Ejec
+- a.Tc_Id_Gatillo
+- b.Sc_Gatillo
+- CAST(a.Tf_Fecha_Ejec AS INTEGER) AS Te_Fecha_Ejec
+
+FROM
+
+EDW_TEMPUSU.T_CRM_PYME_1A_GEN_CCOP8 a
+
+LEFT JOIN MKT_CRM_ANALYTICS_TB.S_STG_TMP_EMP_1A_PARAMETROS b ON a.Tc_Id_Gatillo=b.Sc_Id_Gatillo
+
+GROUP BY 1,2,3,4,5;
+
+Lo correcto:
+
+# 1
+
+SELECT
+
+- a.Td_RUT
+- a.Tf_Fecha_Ejec
+- a.Tc_Id_Gatillo
+- b.Sc_Gatillo
+
+FROM
+
+EDW_TEMPUSU.T_CRM_PYME_1A_GEN_CCOP8 a
+
+LEFT JOIN MKT_CRM_ANALYTICS_TB.S_STG_TMP_EMP_1A_PARAMETROS b ON a.Tc_Id_Gatillo=b.Sc_Id_Gatillo
+
+GROUP BY
+
+- a.Td_RUT
+- a.Tf_Fecha_Ejec
+- a.Tc_Id_Gatillo
+- b.Sc_Gatillo
+- Te_Fecha_Ejec;
+
+# 1.1.12.- Validación de Resultados
+
+Después de cada ejecución de una sentencia SQL se debe validar el resultado con las instrucciones:
+
+.IF ERRORCODE &lt;&gt; 0 THEN .QUIT 8;
+
+Con esto, si el resultado es distinto a 0 (cero), se cancela el proceso.
+
+Estos errores de código deben ser correlativos respecto a la cantidad de validaciones que existan dentro de la propia BTEQ.
+Solo se excluye de esta regla la sentencia DROP TABLE cuando se requiere eliminar una tabla temporal de paso. Esto, porque se asume que la tabla no debiese existir. Sin embargo, en caso de un reproceso podría no ser así y no se espera que el proceso falle por esa razón.
+
+# 1.1.13.- Comprobaciones
+
+Dentro de los procesos BTEQ está permitido realizar comprobaciones a algunas condiciones especiales a fin de tomar una dirección u otra dentro del código construido, como por ejemplo el realizar una inserción a una tabla dependiendo de si está vacía o no, eliminar ciertos registros de otra, etc. Estas se realizan a través de las sentencias .IF, .GOTO y .LABEL.
+
+Un ejemplo de esto sería lo siguiente:
+
+1   /* Valida que la tabla temporal tenga registros */
+2   SELECT DISTINCT
+3     Fec_Encuesta
+4   FROM
+5     {{ var.value.BD_TEMP_JOURNEY }}.T7966_Fld_CtlgP_BEio
+6   ;
+7   .IF ERRORCODE &lt;&gt; 0   THEN .GOTO  CTLGP_NOK;
+8   .IF ACTIVITYCOUNT   &gt; 0 THEN .GOTO  CTLGP_OK;
+9   /* Si no hay registros aborta el proceso */
+10   .LABEL CTLGP_NOK;
+11   SELECT
+12     'TABLA ${EDW_TEMP}.T7966_Fld_CtlgP_BEio NO EXISTE O SIN DATOS';
+13   .QUIT 1;
+14   /* Si hay registros continua el proceso */
+15   .LABEL CTLGP_OK;
+16   SELECT DISTINCT
+17     Fec_Encuesta
+18   FROM
+19     {{ var.value.BD_TEMP_JOURNEY }}.T7966_Fld_CtlgP_BEio
+20   ;
+
+# 1.1.14.- Estadísticas
+
+Las estadísticas son algo fundamental para que el optimizador del motor Teradata pueda armar el mejor plan de ejecución para las consultas, lo que redunda en queries más eficientes y con mejor performance, ya que el motor “sabe” cómo se comportan los datos.
+
+La recolección de estadísticas se debe realizar cada vez que se inserten datos sobre las tablas, ya sean temporales del proceso o de modelos finales. Estas deben ser realizadas sólo a los campos (o grupos de campos) relevantes, es decir, índices y campos utilizados para cruces en las consultas posteriores, en ningún caso aplica a toda la tabla.
+
+Se puede realizar estadísticas a todas las tablas a las que el perfil de usuario permita realizar operaciones de INSERT, por lo que no es posible hacerlo a otras tablas de modelo que deban ser consultadas dentro del proceso.
+
+Existen 2 formas de realizar la recolección de estadísticas: a todos los registros de la tabla o a una muestra representativa. Lo realizaremos a todos los registros si sabemos que su volumetría no es muy grande y a una parte en caso contrario, esto se hace de la siguiente forma:
+
+# a. A una muestra de los registros
+
+1   /* Estadísticas de base.tabla */
+2   DIAGNOSTIC "COLLECTSTATS, SAMPLESIZE=70" ON FOR SESSION;
+3   COLLECT STATISTICS USING   SAMPLE
+4   INDEX (campo1)
+5   ,COLUMN (campo2)
+6   ON base.tabla
+7   ;
+
+Esto aplicará estadísticas a los campos índice (campo1) y columna (campo2) para el 70% de los registros.
+
+# b. A todos los registros
+
+1   /* Estadísticas de base.tabla */
+2   COLLECT STATISTICS
+3   INDEX (campo1)
+4   ,COLUMN(campo2)
+5   ON base.tabla
+6   ;
+
+Esto aplicará estadísticas a los campos índice (campo1) y columna (campo2) para todos los registros de la tabla.
+# 1.1.15.- Borrado de Tablas Temporales
+
+Se debe crear un script al final del DAG donde se eliminen todas las tablas que estén en esquema temporal.
+
+Lo correcto:
+
+1   SELECT DATE,  TIME;
+
+3   DROP  TABLE  EDW_TEMPUSU.T_CREA_VARIABLES_CON_PROB;
+4   DROP  TABLE  EDW_TEMPUSU.T_CREA_VARIABLES_CON_PROB_CONTEO;
+5   DROP  TABLE  EDW_TEMPUSU.T_CREA_VARIABLES_CON_PROB_CONSOLIDADO;
+
+7   .QUIT 0;
+
+# 1.1.16.- Procesos Reprocesables
+
+Los procesos deben ser reprocesables, es decir se pueden reprocesar sin intervención directa en el código. En caso que no sea reprocesable se debe justificar.
+
+# 1.1.17.- Procesos Idempotentes
+
+Esta propiedad nos dice que independiente de la cantidad de veces que se ejecute el proceso el resultado no debe cambiar. O sea una operación computacional se considera idempotente si siempre produce el mismo resultado.
+
+Para nuestro caso las ejecuciones de procesos siempre deben producir la misma salida. Para esto debemos incluir dentro del desarrollo lógicas que permitan el reproceso independiente de las veces que se ejecuten, si debemos intervenir la tarea de forma manual para que el resultado sea el esperado no estamos cumpliendo con esta propiedad.
+
+La idempotencia suele ser inseparable de la reproducibilidad: un conjunto de entradas siempre produce el mismo conjunto de salidas.
+
+# 1.1.18.- Creación de Tabla Histórica
+
+Debe existir una BTEQ 000 donde se agregue el CREATE de las tablas que no tengan un CREATE dentro del proceso (por ejemplo: las tablas históricas). Esta BTEQ no debe enmallarse dentro del DAG.
+
+JNY_075_SEGO06_1A_SEGURO_HOGAR
+BTEQs
+001_Publico_Objetivosql
+002_Tenencia_Seguro_Hogarsql
+003_Gestion_Call.sql
+004_Universo_Clientes_Con_CCT_TDCsql
+005_Envio_Coordinadorsql
+0.-Creacion_Tabla.sql
+JNY_075_SEGOO6_IA_SEGURO_HOGARpy
+
+# 1.1.19.- Prueba de BTEQs
+
+Todas las querys deben ser probadas y ejecutadas en su totalidad, antes de ser enmalladas.
+
+# 1.2.- Acerca del Formato de Datos
+
+# 1.2.1.- RUT de Clientes
+
+Deben colocarse en formato DECIMAL(8,0).
+
+Muchas veces se trabaja con un conjunto universo que trae RUTs con más de 8 dígitos los cuales son RUTs inválidos. Por ejemplo, al extraer erróneamente el rut desde la tabla EDW_VW.EXTERNAL_IDENTIFICATION_HIST.
+
+Si se crea este dato como un campo de DECIMAL(8,0) al venir un RUT mas grande se generará un error de overflow el cual permitirá visualizar el error para posteriormente reparar dicha situación y mejorar la query con la cual se está trabajando.
+
+Lo que no se debe hacer:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_02
+2   (
+3     Te_Rut                      INTEGER
+4     ,Te_Periodo_Ref             INTEGER
+5     ,Tf_Fecha_Ref_Dia           DATE  FORMAT 'YYYY-MM-DD'
+# Lo correcto:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_02
+2   (
+3     Td_Rut                      DECIMAL(8,0)
+4     ,Te_Periodo_Ref             INTEGER
+5     ,Tf_Fecha_Ref_Dia           DATE  FORMAT 'YYYY-MM-DD'
+
+Observación: Para procesos que se conecten a Marketing Cloud donde el Data Extension tenga definido el rut como INTEGER, ese campo se puede dejar en la última tabla del proceso como INTEGER para que no tenga inconsistencias con Marketing Cloud.
+
+# 1.2.2.- Tipo de Campo DATE
+
+# Lo que no se debe hacer:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_02
+2   (
+3     Td_Rut                      DECIMAL(8,0)
+4     ,Te_Periodo_Ref             INTEGER
+5     ,Tf_Fecha_Ref_Dia           DATE
+
+# Lo correcto:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_02
+2   (
+3     Td_Rut                      DECIMAL(8,0)
+4     ,Te_Periodo_Ref             INTEGER
+5     ,Tf_Fecha_Ref_Dia           DATE  FORMAT 'YYYY-MM-DD'
+
+# 1.2.3.- Tipo de Campo CHAR o VARCHAR
+
+Deben ir acompañados con la sentencia CHARACTER SET LATIN NOT CASESPECIFIC.
+
+# Lo que no se debe hacer:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_03
+2   (
+3     Td_Rut                      DECIMAL(8,0)
+4     ,Tc_Banco                   CHAR(40)
+
+# Lo correcto:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_03
+2   (
+3     Td_Rut                      DECIMAL(8,0)
+4     ,Tc_Banco                   CHAR(40)  CHARACTER SET LATIN   NOT CASESPECIFIC
+
+# 1.2.4.- Sentencia COMPRESS
+
+Los campos, en la medida que se pueda, deben ir acompañados con una sentencia COMPRESS en los valores que más repiten en la tabla.
+
+# Lo correcto:
+
+1   CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_03
+2   (
+3     Td_Rut        DECIMAL(8,0)
+4     ,Tc_Banco     CHAR(40)  CHARACTER SET LATIN   NOT CASESPECIFIC COMPRESS   ('Bci','Chile','Santander')
+
+El objetivo de usar COMPRESS es reducir el tamaño de almacenamiento de las tablas.
+
+# 1.2.5.- Tipo de Datos FLOAT
+
+No se deben usar el tipo de dato FLOAT. El mismo debe ser reemplazado por el tipo de dato DECIMAL correspondiente.
+
+Observación: Solo se pueden usar tipo de datos FLOAT en los modelos analíticos, pero debe estar validado y plenamente justificado por el proceso de negocio asociado.
+
+# Lo que no se debe hacer:
+
+1  CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_01
+# Lo correcto:
+
+CREATE TABLE  MKT_TMP_INPUT_TB.T_PRE_TPP_TRF_BCI_OTBCO_01
+(
+Td_Rut                     DECIMAL  (8,0)
+,Te_Periodo_Ref            INTEGER
+,Tf_Fecha_Ref_Dia          DATE  FORMAT 'YYYY-MM-DD'
+,Te_Num_Bancos             INTEGER
+,Td_Monto_Transf_1_Ano     DECIMAL(25,10)
+,Td_Max_Monto_Transf       DECIMAL(25,10)
+,Td_Mto_Transf_1Ano_Prom   DECIMAL(25,10)
+,Tc_Banco                  CHAR(40)  CHARACTER SET LATIN   NOT CASESPECIFIC
+)  PRIMARY INDEX (Td_RUT,  Tf_Fecha_Ref_Dia,   Te_Periodo_Ref);
+
+Se recomienda que para los campos que tengan relación con montos, estos se almacenen en un campo de tipo DECIMAL, tanto en las BTEQs como en el Data Extension de Marketing Cloud. Esto debido a que el tipo de dato Number de Marketing Cloud tiene las mismas limitancias que un tipo de dato INTEGER, por lo que no puede almacenar números a partir de cierto largo.
+
+# 1.3.- Condiciones, Prohibiciones y Recomendaciones
+
+# 1.3.1.- Fuentes de Datos Productivas
+
+Solo se deben utilizar fuentes de datos gobernadas (existe un equipo responsable).
+
+| Lo que no se debe usar:    | Lo correcto:                                     |
+| -------------------------- | ------------------------------------------------ |
+| Utilizar esquemas como:    | Utilizar esquemas productivos y gobernados como: |
+| BCIMKT                     | EDW\_VW                                          |
+| ARMVIEWS (Esquemas de CIM) | EDW\_VA                                          |
+| MKT\_CRM\_CMP\_TB          | EDC\_JOURNEY\_VW                                 |
+| Etc.                       | MKT\_EXPLORER\_TB                                |
+|                            | Etc.                                             |
+
+# 1.3.1.3.2.- Manejo de Fechas
+
+No se debe utilizar CURRENT_DATE. En su lugar, se deben utilizar las variables de fechas de Airflow (por ejemplo: ds_nodash), pues no permite el reproceso a un periodo anterior.
+
+# Macros (Fechas Dinámicas)
+
+# 1.3.3.- Consultas Anidadas
+
+Se recomienda evitar las consultas anidadas por razones de performance, en su lugar evaluar el fisicalizar las consultas anidadas dentro de tablas temporales considerando la creación de índices por los campos llaves a utilizar en los JOIN a estas tablas, así como la recolección de estadísticas de los mismos.
+
+# 1.3.4.- Líneas de Código Comentadas
+
+No pueden existir líneas de código comentadas. Toda query o línea de código que no se ejecuta, no debe incluirse en el script.
+
+Lo que no se debe hacer:
+SELECT
+Te_Fecha_Ref
+# 1.3.5.- Uso de DISTINCT
+
+No se debe usar DISTINCT, ese se reemplaza por GROUP BY.
+
+# Lo que no se debe hacer:
+
+SELECT DISTINCT  A.RUT,  A. FECHA_EJEC,
+CASE  WHEN  E.BANCA LIKE '%BANCA EMPRESARIO%'   THEN  'PYME'
+WHEN  E.BANCA LIKE  '%NACE%'  THEN 'NACE'
+ELSE   NULL END AS BANCA,
+A.ID_GATILLO,  B.PRODUCTO,  B.AMBITO,  B.TIPO,  B.GATILLO,
+CAST(B.PROBABILIDAD*B.SPREAD*B.DURATION*C.PESO*CAST(D.MONTO_COMERCIAL AS DECIMAL(30,2))  AS BIGINT)   SCORE,
+E.TIPO_CLIENTE||' - '||E.NOMBRE_SEGMENTO ADICIONAL
+,'SYD' AS CANAL
+FROM  EDW_TEMPUSU.AE_CRM_PYME_GEN_CCOP8 A
+LEFT  JOIN  BCIMKT.AE_CRM_PYME_PARAMETROS B   ON A.ID_GATILLO=B.ID_GATILLO
+LEFT  JOIN  BCIMKT.AE_CRM_PYME_PESO_VALIDEZ C   ON A.ID_GATILLO=C.ID_GATILLO
+LEFT  JOIN  BCIMKT.AE_CRM_PYME_RUTERO_ACT E   ON A.RUT=E.RUT
+LEFT  JOIN  BCIMKT.AE_CRM_PYME_MONTO D  ON D.TRAMO_VENTAS_FINAL=E.TRAMO_VENTAS_FINAL
+
+# Lo correcto:
+
+SELECT
+a.Td Rut
+,a.Tf_Fecha_Ejec
+,CASE         WHEN e.Sc_Banca LIKE '%BANCA EMPRESARIO%'
+THEN  'Pyme'
+WHEN e.Sc_Banca LIKE '%NACE%'
+THEN  'Nace'
+ELSE  NULL
+END Tc_Banca
+,a.Tc_Id_Gatillo
+,b.Sc_Producto
+,b.Sc_Ambito
+,b.Sc_Tipo
+,b.Sc_Gatillo
+,CAST(b.Sd_Probabilidad*b.Sd_Spread*b.Se_Duration*c.Se_Peso*CAST(d.Monto_Consumo AS DECIMAL(30,2)) AS BIGINT)  AS Score
+,e.Sc_Tipo_Cliente||' - '||e.Sc_Nombre_Segmento AS Adicional
+,'SYD'  AS Canal
+FROM
+EDW_TEMPUSU.T_CRM_PYME_1A_GEN_CCOP8 a
+LEFT JOIN  MKT_CRM_ANALYTICS_TB.S_STG_EMP_1A_PARAMETROS b
+ON a.Tc_Id Gatillo=b.Sc_Id_Gatillo
+LEFT JOIN  MKT_CRM_ANALYTICS_TB.S_STG_EMP_1A_PESO_VALIDEZ c
+ON a.Tc_Id Gatillo=c.Sc_Id_Gatillo
+LEFT JOIN      MKT_CRM_ANALYTICS_TB.S_STG_EMP_1A_RUTERO_PYME e
+ON a.Td_Rut=e.Sd_Rut
+LEFT JOIN      MKT_CRM_ANALYTICS_TB.ae_crm_pyme_socios_monto d
+ON d.Tramo_Renta=e.Sc_Tramo_Ventas_Final
+WHERE
+e.Sc_Marca_Cliente_Bci   = 'Pyme'
+GROUP BY
+a.Td_Rut
+,a.Tf_Fecha_Ejec
+# 1.3.6.- Acerca de la Utilización de las Tablas SET y MULTISET
+
+Las tablas definidas como SET no permiten registros duplicados, mientras que las definidas como MULTISET si lo hacen. Si no se especifica en el DDL de creación de la tabla entonces Teradata creará la misma por defecto como SET.
+
+Una tabla definida como SET fuerza al motor a realizar una validación de duplicidad de registros cada vez que se inserte o se actualice una fila en la tabla. Esto degrada la performance sobre todo sí necesitamos hacer inserciones masivas de registros.
+
+Antes de crear una tabla es importante saber qué tipo de datos vamos a almacenar para elegir el mejor tipo de definición, siempre recordando que el tipo SET hace que el motor trabaje más para eliminar los duplicados:
+
+- Si al insertar los registros se utiliza un GROUP BY o un QUALIFY entonces se recomienda utilizar el tipo MULTISET ya que estas sentencias ya habrán eliminado los duplicados.
+- Si la tabla tiene un índice único (UPI) tampoco se justifica usar SET ya que el UPI no permitirá índices duplicados de por sí.
+
+En resumen, para el desarrollo de procesos se recomienda evitar la utilización de tablas SET, ya que provocan una degradación del performance de la máquina Teradata. Este problema se acentúa cuando los índices de las tablas están mal definidos provocando una mala distribución interna de los datos.
+
+Para evitar este problema se recomienda siempre definir tablas MULTISET con índices acotados (en lo posible únicos).
+
+# 1.3.7.- Acerca del Uso de las Cláusulas LEFT, RIGHT, FULL OUTER JOIN
+
+# 1.3.7.1.- Uso Excesivo
+
+Se recomienda evitar el exceso de uso de la cláusula JOIN cuando se pretende obtener un resultado parcial. Es decir, LEFT, RIGHT, o cuando se requiere un producto cruz, FULL OUTER, siendo este último el más pesado y, sí y sólo sí, puede ser utilizado para cruces mínimos que no hagan crecer los registros de forma exponencial. Esto además será revisado por parte del equipo de mantención de datos, quedando a su criterio si es aceptado o no.
+
+Cuando sea imperativo el uso de muchos cruces de este tipo se recomienda separarla consultas más pequeñas utilizando tablas temporales de paso.
+
+# 1.3.7.2.- Orden de Joins
+
+A lo expuesto anteriormente y siempre pensando en la performance del proceso, en la utilización de la sintaxis JOIN (LEFT, RIGHT, OUTER, INNER), es obligatorio respetar el orden de los JOIN: de izquierda a derecha cuando es LEFT o de derecha a izquierda si es RIGHT cuando se realiza la comparación en el ON.
+
+Lo que no se debe hacer:
+
+1   SELECT
+2     P.Party_Id
+3     ,EIH.External_Identification_Num
+4   FROM
+5     edw_vw.party P
+6     LEFT JOIN  edw_vw.external_identification_hist EIH
+7       ON EIH.party_id   = P.party_id
+8   WHERE
+9     EIH.party_end_dt   IS NULL;
+
+Lo correcto:
+
+1   SELECT
+# 1.3.8.- Cláusula WHERE
+
+No se debe hacer transformación en la cláusula WHERE a los campos que vengan de fuentes como DW, con grandes volúmenes de datos. Si se necesita hacer una transformación de datos para igualar o comparar se debe hacer preferiblemente a las tablas temporales que se crean en el script. Esto se debe realizar por el costo enorme de procesamiento de formatear la tabla con más registros, en vez de hacerlo en la tabla más pequeña.
+
+Lo que no se debe hacer:
+
+1   SELECT
+2     C.Fec_Asig_Sol
+3   FROM
+4     MKT_CRM_ANALYTICS_TB.S_STG_EMP_1A_RUTERO_PYME A
+5     INNER JOIN  EDC_SUC_VW.SUC_ESTADO_SOLICITUD C
+6       ON A.Sd_Nro_Solicitud =   C.Nro_Solicitud
+7   WHERE
+8     CAST(C.Fec_Asig_Sol   AS DATE  FORMAT 'YYYY-MM-DD')   = A.Sf_Fecha_Ejec  -  2
+
+Lo correcto:
+
+La prioridad sería castear el campo de la tabla más pequeña y luego comparar. Otra opción es realizar la transformación en los campos del SELECT y utilizar el alias del campo en el WHERE, es decir:
+
+1   SELECT
+2     CAST(C.Fec_Asig_Sol   AS DATE  FORMAT 'YYYY-MM-DD')   AS Fecha_Asig
+3   FROM
+4     MKT_CRM_ANALYTICS_TB.S_STG_EMP_1A_RUTERO_PYME A
+5     INNER JOIN  EDC_SUC_VW.SUC_ESTADO_SOLICITUD C
+6       ON A.Sd_Nro_Solicitud =   C.Nro_Solicitud
+7   WHERE
+8     Fecha_Asig  = A.Sf_Fecha_Ejec   - 2
+
+Esta norma será exigida para desarrollos nuevos. En BTEQs ya existentes se permitirá debido a la complejidad del cambio.
+
+# 1.3.9.- Uso de Comparador ‘<>’
+
+El uso del comparador <> se debe sustituir por el NOT(campo1=campo2).
+
+Lo que no se debe hacer:
+
+1   SELECT
+2     Te_Fecha_Ref
+3     ,Te_Modelo_Id
+4     ,Tc_Producto
+5   FROM
+6     EDW_TEMPUSU.T_CREA_VARIABLES_CON_PROB_CONTEO
+7   WHERE
+8     Tc_Producto <> 3
+9     AND Tc_Producto <> 2;
+
+Lo correcto:
+
+1   SELECT
+2     Te_Fecha_Ref
+3     ,Te_Modelo_Id
+4     ,Tc_Producto
+5   FROM
+6     EDW_TEMPUSU.T_CREA_VARIABLES_CON_PROB_CONTEO
+7   WHERE
+8     NOT(Tc_Producto=3)
+9     AND NOT(Tc_Producto=2);
+# 1.3.10.- Comando LIKE
+
+Se recomienda no usar la sentencia LIKE en los procesos ya que ocupa muchos recursos y afecta de manera considerable la performance tanto del proceso como el de la máquina.
+
+Lo que no se debe hacer:
+
+1   SELECT
+2   Account_Num
+3   ,Account_Modifier_Num
+4   FROM Edw_Vw.Agreement
+5   WHERE Account_Num  LIKE ‘D%’;
+
+Esta instrucción en la mayoría de las veces puede ser reemplazada por las siguientes instrucciones:
+
+- SUBSTR, la cual es más efectiva en la búsqueda de información.
+- POSITION, la cual valida si un STRING se encuentra en dentro de un determinado campo.
+
+Lo correcto:
+
+1   SELECT                                                                             1  SELECT
+2   Account_Num                                                                        2  Account_Num
+3   ,Account_Modifier_Num                                                              3  ,Razon_Social
+4   FROM Edw_Vw.Agreement a                                                            4  FROM  EDW_TEMPUSU.Temporal1
+5   WHERE SUBSTR(Account_Num,   1,  1) = ’D’;                                          5  WHERE  POSITION  ('restaurant'  IN Razon_Social)   > 0;
+
+# 1.3.11.- Comando IN
+
+Debemos tener mucho cuidado cuando usemos esta sentencia, ya que al igual que el LIKE utilizan mucho recurso de máquina y afecta nuestros procesos cuando el universo de los datos sea de gran magnitud.
+
+Para evitar el uso de la sentencia IN, se sugiere crear una tabla temporal con los datos y con esto podemos realizar un INNER JOIN de manera más natural para la máquina.
+
+En el siguiente ejemplo sólo mostramos una búsqueda por 5 datos, se debe considerar la recomendación para mayor volumen de información.
+
+Ejemplo
+
+1  SELECT
+2    Event_Id
+3    ,Acct_Num_Relates
+4    ,Event_Start_Date
+5  FROM
+6    Edw_Vw.Event_Tdm
+7  WHERE
+8    Acct_Num_Relates  IN
+(‘000000000001’,‘000000000002’,‘000000000003’,‘000000000004’,‘000000000005’);
+
+Esta query para que tenga un mejor rendimiento, se debe reemplazar por las sentencias:
+
+1   /* Se crea tabla temporal para insertar valores del IN */
+2   DROP TABLE  edw_temp.event_ope;
+3
+4   CREATE MULTISET  TABLE  edw_temp.event_ope
+5   (
+6   Acct_Num_Relates CHAR(12)   CHARACTER SET LATIN   NOT CASESPECIFIC
+7   )
+8   UNIQUE PRIMARY  INDEX  (Acct_Num_Relates);
+9
+10   /* Insertamos los valores dentro de la tabla temporal */
+11   INSERT into  edw_temp.event_ope VALUES   ('000000000001');
+12   INSERT into  edw_temp.event_ope VALUES   ('000000000002');
+13   INSERT into  edw_temp.event_ope VALUES   ('000000000003');
+14   INSERT into  edw_temp.event_ope VALUES   ('000000000004');
+15   INSERT into  edw_temp.event_ope VALUES   ('000000000005');
+16
+17   COLLECT  STATISTICS INDEX  (Acct_Num_Relates)   ON edw_temp.event_ope;
+18
+19   /* Finalmente realizamos la consulta */
+SELECT
+Event_Id
+,Acct_Num_Relates
+,Event_Start_Date
+FROM
+Edw_Vw.Event_Tdm e
+,edw_temp.event_ope o
+WHERE
+e.Acct_Num_Relates =   o.Acct_Num_Relates;
+
+# 1.3.12.- Comando OR
+
+Al igual que la sentencia IN, la sentencia OR tiene un uso excesivo de máquina ya que obliga al motor a realizar un FULL TABLE SCAN.
+
+Lo que no se debe hacer:
+
+SELECT
+Account_Num
+,Account_Modifier_Num
+FROM
+Edw_Vw.Agreement A
+WHERE
+A.Account_Num  = 'D03799991404' OR A.Account_Num     = 'D12899953100';
+
+Lo correcto:
+
+SELECT
+Account_Num
+,Account_Modifier_Num
+FROM
+Edw_Vw.Agreement A
+WHERE
+A.Account_Num  =  'D03799991404'
+UNION ALL
+SELECT
+Account_Num
+,Account_Modifier_Num
+FROM
+Edw_Vw.Agreement A
+WHERE
+A.Account_Num  =  'D12899953100';
+
+# 1.3.13.- Comando EXISTS/NO EXISTS
+
+El uso de los comandos EXISTS (y NO EXISTS) quedará excluido de las sentencias que se podrán utilizar dentro de cualquier script (query) Teradata en primera instancia, dado que presenta problemas en la versión actual del motor de base de datos. Sin embargo, no se prohíbe completamente su uso previa revisión de performance, y si no hubiere una mejor solución, por parte del equipo de mantención de datos.
+
+# 1.3.14.- Sentencias CASE
+
+No existe un límite del número de sentencias CASE que puede tener una consulta. No obstante, se debe considerar que su uso requiere de Spool, por lo cual se recomienda una subdivisión de la consulta generada si su número fuese muy grande.
+
+Dentro de las sentencias CASE está permitido utilizar los comandos que suelen estar prohibidos dentro de la normativa, tales como: OR, IN, LIKE, entre otros.
+
+# 1.3.15.- Sentencias REPEAT
+
+El uso de la sentencia REPEAT se limita a la inserción de poca volumetría de registros (por ejemplo al insertar "periodos" sobre una tabla). No se recomienda su uso sobre grandes volúmenes de información por la falta de recolección de estadísticas entre las inserciones de grupos de registros.
+
+# 1.3.16.- Sentencias UPDATE
+
+La sentencia UPDATE está prohibida de usarse pues su performance degrada el motor. En su lugar se debe utilizar el método de aislar los registros que serán modificados, es decir, crear una tabla temporal, respaldar los datos que serán actualizados, borrar los mismos en la tabla destino y finalmente realizar el INSERT de éstos.
+# 1.3.17.- Tablas Volátiles
+
+Está prohibido el uso de tablas Volátiles en los procesos por la pérdida de trazabilidad que implica su uso. En cualquier caso, se deben utilizar tablas temporales de paso que deben ser eliminadas una vez finalice el proceso.
+
+# 1.3.18.- Procedimientos Almacenados
+
+Está prohibida la utilización de Procedimientos Almacenados (SP) en los procesos debido a la pérdida de trazabilidad que esto genera.
+
+# 1.3.19.- Acerca del Uso de Particiones en las Tablas
+
+Teradata permite el uso de tablas particionadas, pero se debe considerar que el uso de particiones requiere de espacio adicional y, en ocasiones, también de administración adicional, por lo que su uso se limita sólo a procesos departamentales (sandbox), pero no a procesos productivos. El uso de particiones se analizará caso a caso por parte del equipo de mantención de datos y siempre que esté debidamente validado y plenamente justificado por el proceso de negocio asociado.
+
+# 1.3.20.- Acerca del Spool
+
+El tamaño estándar del Spool en ambiente productivo de Teradata está fijado en base a la experiencia y uso que históricamente ha tenido. Se ha comprobado que los procesos que requieren de un uso mayor de Spool generalmente tienen problemas de otra índole: exceso de LEFT JOIN en una misma consulta, mala distribución de los datos (mal índice primario), etc... Si el problema es por la gran cantidad de cruces o trabajo en una misma consulta, se recomienda atomizar las mismas bajo la metodología de creación de tablas temporales para evitar cualquier problema con el Spool.
+
+# 1.3.21.- Procesos con salida MCP (Ex-Evergage)
+
+Para todo proceso que tenga carga de campañas con salida hacia MCP (Ev-Evergage), se debe considerar como input de datos para la carga del CIC del cliente, la fuente EDW_SEMLAY_VW.CLI. Adicionalmente, siempre se debe realizar una función TRIM() al CIC, esto para evitar espacios vacíos al inicio o al final del mismo.
+
+1  ,TRIM(CIC) AS IC_CIC
+
+# 2.- Paso a Producción
+
+# 2.1.- Creación de la ficha de paso a producción
+
+Se debe adjuntar la ficha técnica relacionada al Proceso de datos que se está pasando a producción, a modo de ejemplo se adjunta la siguiente: Ficha Técnica
+
+# 2.2.- Pruebas y Evidencia
+
+Antes de pasar a producción se deben realizar ejecuciones exitosas en ambiente de desarrollo incluyendo la evidencia de los resultados esperados.
+
+# 2.3.- Reunión previa solicitud de PaP
+
+Al realizar la entrega de la Ficha de Paso a Producción se sugiere agendar una reunión de 5 min con la contraparte encargada de realizar el PaP, esto para explicar el proceso y los resultados esperados.
+
+# 2.4.- Ejecución del DAG
+
+Se debe ejecutar el DAG en un periodo aleatorio, resultando dicha prueba exitosa.
+
+# 2.5.- Carga histórica
+
+La historia se debe generar en ambiente de producción, es decir se debe ejecutar el proceso tantas veces sea necesario para generar toda la historia requerida, para que exista una comparación entre lo generado en desarrollo con lo de producción. Esto debido a que hay procesos que no consideran la correcta estacionalidad en las tablas y se generan diferencias al reprocesar.
+
+# 2.6.- Revisión de Logs
+
+Se debe hacer revisión de los Log de salida de los procesos enmallados en Airflow, para validar que se haya ejecutado correctamente y traiga la información esperada.
+# 2.7.- Mantenciones y Controles de Cambio
+
+Toda mantención a procesos ya productivos, deben seguir el mismo flujo que un paso a producción.
+
+# 2.8.- Comentarios y Correcciones
+
+Después de que la UTC entregue los hallazgos a los procesos, el tiempo para productivizar el activo analítico dependerá del tiempo de respuesta del analista o desarrollador.
+
+# 3.- Paso a Producción de Journey (Conectados al Coordinador de Journeys)
+
+Las siguientes son consideraciones especiales para aquellos desarrollos que requieran pasar por el coordinador.
+
+Protocolo de estructuración de DAGs y ajuste de código del proceso de datos
+
+# 3.1.- Estructura de DAGs (1A y 2A)
+
+El DAG se debe dividir en dos partes: 1A y 2A.
+
+La parte 1A corresponde al cálculo de la nómina, la cual es la entrada al coordinador.
+
+La parte 2A recepciona la salida del coordinador y filtra la nómina para enviarla a MKTC.
+
+# 3.2.- Catálogo de Journeys
+
+Se debe registrar el journey en las tablas de catálogo del coordinador, este proceso lo realiza el Líder de Journey en conjunto con Nicole Fresard (o quien corresponda del equipo de Javier Molina).
+
+# 3.3.- Despliegue en Producción
+
+Por último cuando la prueba es exitosa se realiza el cambio a ambiente productivo.
+
+# 3.4.- Uso de Coordinador AM/PM
+
+En ambiente productivo existe un coordinador PM, donde se enmallan todos los journey, sin embargo también existe un coordinador AM, el cual se usa en caso excepcional con previa autorización.
+
+# 4.- Bitbucket
+
+# 4.1.- COMMITS
+
+Referente a los mensajes o títulos de los commit deben ser más explicativo conforme al cambio que se está realizando, con el fin de dar una mejor documentación de las modificaciones que se realizan en los procesos, se debe utilizar la siguiente estructura:
+
+Linea resumen: Op asunto [ambito]
+
+Donde:
+
+- Op debe comenzar con letra mayuscula:
+- - Anade (Add) una nueva funcionalidad para los usuarios
+- Modifica (Change) alguna característica de una funcionalidad dada
+- Elimina (Remove) definitivamente una funcionalidad obsoleta.
+- Corrige (Fix) un error que afecta al usuario
+- Asegura (Security) mitiga una vulnerabilidad en el código.
+- Mejora (Improve) el rendimiento o el uso de una funcionalidad existente
+- Actualiza (Update) sin añadir ni modificar funcionalidades, por ejemplo al refactorizar código, añadir documentación o incluir scripts de compilación y configuraciones.
+- Retoca (Tweak) alguna particularidad del aspecto o una funcionalidad determinada
+- Inicia (Initial) para empezar el proyecto; por ejemplo Inicia el repositorio (Initial commit).
+- Integra (Merge) la petición de fusión #123 de algún usuario a alguna rama.
+- Libera (Release) la versión XYZ del proyecto.
+
+asunto (subject) debe completar la frase imperativa del resumen y terminar sin punto.
+- ámbito (scope) es opcional, omitiendo los corchetes si no se indica. Según el proyecto se pueden definir ámbitos como config, logging, common, framework, middleware, tests, database, lib, reporting, doc, browser, events, preprocessor, webserver, proxy, license, etc.
+
+Donde:
+
+- “Op” es el tipo de operación que se está realizando en el código.
+- “Asunto” se refiere a la complementación de la acción “Op”, la cual debe resumir la operación que se está realizando en el código.
+- “Ámbito” este campo es opcional, el cual indica el alcance que pueda tener en el proceso.
+# 5.- Airflow y Python
+
+# 5.1.- Ramas y Carpetas
+
+Todo DAG que se cree, debe cargarse a la rama de develop bitbucket (airflow de desarrollo), que es el área donde se podrán realizar cambios y hacer las pruebas de funcionamiento. Esto mismo aplica para los activos analíticos que se estén modificando (mantención).
+
+AIRFLOW_MLOPS
+├── dags
+├── dags cert
+├── dagsdevelop
+├── Analytics
+├── 2 MLOps
+└── No_Airflow
+├── gitignore
+└── READMEmd
+
+En otras palabras debemos situar DAGs en carpeta dags_develop -> journey_builder. Tanto Nombre del DAG, Archivo .py como carpeta del journey deben coincidir. Así como debemos situar DAGs en carpeta dags_develop -> Analytics. Tanto Nombre del DAG, Archivo .py como carpeta del activo analítico deben coincidir.
+
+# 5.2.- Variables de Fecha
+
+Todo proceso que necesite realizar un cálculo de fecha, debe utilizar las variables disponibles de airflow como {{ ds }} o {{ ds_nodash }}, y a partir de estas fechas realizar las transformaciones correspondientes.
+
+Lo correcto:
+
+INSERT INTO Mkt_Tmp_Input_Tb  compra fuera_fechas
+SELECT           {{ds
+add_months (CAST("     45 DATE),     fecha
+Lret
+months(fecha
+Lret       fecha_ref_lm
+add_months( fecha_ref fecha_ref_In_plus
+add_months( fecha_ref   fecha_ref_12m
+extract(year FRoM fecha_ref) 1d0+extract (month FROM fecha_ref)  anomes_ref
+extract(year FROM fecha_ref_Im) 188textract(month FRCM fecha_ref_In  anomes_ref_Im
+extractlyear FROM fecha_ref_Im_Plus) 1g8+extract(month FROM fecha_ref_Im_plus) as anomes_ref_Im_Plus
+extract(year FROM fecha_ref_Izm) 1e0+extract(month FROM fecha_ref_1zm)  anomes_ref_1zm;
+ERRORCODE <>0THEN QUIT 2;
+
+Se puede apreciar el uso de {{ ds }} para obtener la fecha en formato YYYY-MM-DD.
+
+# 5.3.- Variables de Esquemas
+
+Los esquemas de las tablas que se crean en las bteqs se deben trabajar a través de las variables de Airflow que son las siguientes: BD_TEMP_JOURNEY para las tablas temporales y BD_JOURNEY para las tablas productivas.
+
+Lo que no se debe hacer:
+DROP TABLE Mkt_ Tmp_Input_Tb.T_compra_fuera_fechas;
+
+Una tabla con el esquema escrito en duro en el código, trae como consecuencia que al momento de pasarlo a desarrollo hay que reemplazar dicho esquema al que corresponda.
+
+Lo correcto:
+
+DROP TABLE {{ var.value BD_TEMP_ANALYTICS}} T_AE_{{ds_nodash}}_CORTE_LIFT;
+
+En este caso se puede apreciar un esquema contenido en una variable AirFlow que funciona en cualquier ambiente.
+
+# 5.4.- Definir DAG
+
+Para los parámetros con los que se define el DAG, entiéndase como correos, contraseñas y usuarios, se deben utilizar variables y/o secretos en Airflow. Estos valores no deben ir escritos en duro en el código de Python.
+
+Lo que no se debe hacer:
+
+default_args Analytics Empresas
+owner
+start date   utils.dates.davs ap0( 33).astimezone (pendulum.timezone (Variable.get( 'T
+email      luis martinezmabci.cl  camilo carrascoc@bci cl    Marcosreimanabci.cl"
+email on_failure   False,
+email_on_retry   False,
+retries        timedelta(minutes
+retry_delay                       10) ,
+depends_on_past   False,
+Todos los correos están escritos en el parámetro
+
+Lo correcto:
+
+default_args Analytics Empresas
+owner       utils.dates days_ago( 33)astimezone (pendulum.timezone (Variable.get('TZ')))
+start_date
+enlail  lista correops
+email_on_failure  False,
+emailon_retry   False,
+retries
+retry_delay  timedelta (minutes  10) _
+depends_on_past  False
+Los correos están contenidos en la variable
+
+# 5.5.- Parámetro depends_on_past
+
+No declarar el parámetro depends_on_past este parámetro hace que al cargar un DAG nuevo en el Airflow, no se ejecute de manera automática cuando corresponde.
+
+Lo que no se debe hacer:
+
+bteq_ʳᵘᵗᵉʳᵒ            BteqOperator(
+bteq=       ISQL/sow_pyme_rutero.sql
+task_id= sow_rutero
+ttu conn_id-'td_ttu_emp
+pool='td_pool
+depends_ on_past-True,
+xcom_push-True,
+dag-dag)
+Al definir el parámetro depends_on_past como True, y se trata de un activo analítico nuevo, no va a ejecutarse, pues no existe una ejecución previa.
+
+Lo correcto:
+# 5.6.- Operadores Customs
+
+Para declarar algún Operador, se deben guiar por las estructuras contenidas en el siguiente enlace:
+
+- Operadores
+- CSVToDataExtension
+- FastExportOperator
+
+# 5.7.- Uso de Sensor TimeDeltaSensor
+
+No se debe utilizar el operador TimeDeltaSensor para iniciar un proceso, debido a que este usa slots innecesarios.
+
+Cron (Dag Runs)
+
+# 5.8.- Encabezado del DAG
+
+Todo Python debe contar con un encabezado, donde se incluya, descripción del Activo Analítico o proceso, Nombre del Autor y Fecha de Creación.
+
+- Descripcion: Breve descripcion del Activo
+- Autor: Nombre Autor
+- Area: Persona, Empresa (PYME, WLS, Empresa)
+- Fecha: YYYMM
+
+# 5.9.- Owner y tag
+
+Especificar el Owner del Activo Analítico, este debe ser el departamento al que pertenece, por ejemplo: Analytics_Empresa, Analytics_Persona, no deben ir nombres de colaboradores del banco en el Owner.
+
+Se debe colocar el área al que pertenece, para el caso de Desarrollo de Journeys, indicar Dominio CRM 2.0.
+
+# Lo que no se debe hacer:
+
+default_args {
+'owner               Nombre Colaborador
+
+# Lo correcto:
+
+default_args                          Dominio CRM 2.0
+Obiner
+
+Para poder diferenciar el ámbito del proceso, se debe agregar un tag que indique si pertenece al negocio ‘Personas’, ‘PYME’ o ‘ED’ según corresponda.
+
+dag  DaG( "JNY_034_|MPP_007_14_VENTATC_ADICIONAL  default_args-default_args, schedule_interval-None,tags-[ 'CRM:  'Personas  Journey' MMPPe07
+# 5.10.- Retry
+
+Se debe especificar el parámetro retries para 2 reprocesos, y el tiempo de espera entre reprocesos de 3 minutos (retry_delay).
+
+Ejemplo:
+
+1   'retries': 2,
+2   'retry_delay': timedelta(minutes=3)
+
+# 5.11.- Ejecuciones previa solicitud PaP
+
+El DAG debe tener al menos tres ejecuciones limpias en el ambiente de desarrollo, para poder solicitar la revisión del proceso.
+
+# 5.12.- Tareas atómicas
+
+Esto significa que cada tarea/celda debe ser responsable de una operación solamente y que se puede volver a ejecutar independientemente de las demás. Siempre debemos definir que nuestras tareas realicen solamente un tipo de operación.
+
+Ej: Una tarea sólo debe realizar la extracción de datos y otra que genere la carga en algún destino. Ya que si nos falla la extracción podemos identificar de forma rápida que tenemos problemas con esa tarea en particular y no un grupo de operaciones que se dejaron dentro de un mismo Task.
+
+# 5.13.- Orquestación
+
+Utilizar las herramientas de orquestación como ELT (extract, load, transform). Con esto nos referimos que debemos implementar el patrón de extraer, cargar, transformar en un pipeline. Esto significa que debemos tratar de que las lógicas de transformación siempre sean en los sistemas de origen o destino, así evitamos usar Airflow como herramienta de procesamiento.
+
+# 5.14.- PEP 20 Zen Python.
+
+La importancia de la PEP 20 radica en intentar definir una guía de principios de cómo debe de crearse el código para considerarse Pythónico. El Zen de Python podría exportarse a otros lenguajes dado que muchas de sus reglas no son únicas para Python sino aplicables a cualquier lenguaje.
+
+# 5.14.1.- Bonito es mejor que feo
+
+Dejar todo el código en una línea quizás por temas es espacio diríamos que es lo mejor, pero para al momento entender es más agradable y legible que esté bien ordenado.
+
+# ejemplo de codigo feo
+gatos-4;perros-6;patas-34;assert patas__(gatos perros*4) , 'Numero de patas dispar
+
+# ejemplo de codigo bonito
+gatos
+perros
+patas     34                                             'Numero de patas dispar
+assert patas        (gatos               (perros   4) ,
+
+# 5.14.2.- Explícito es mejor que implícito
+
+A veces es mejor agregar unas variables intermedias para contextualizar al lector sobre qué significa cada valor.
+
+version implicita
+def metros_a_pulgadas_dobles(metros):
+return metros       39.3701
+
+version explicita
+def metros_a_pulgadas_dobles(metros):
+gadas_por_metro        39.3701
+pul_
+multi_doble               pulgada_por_metro   multi_doble
+return metros
+
+# 5.14.3.- Simple es mejor que complejo
+
+Un sistema complejo consta de varias partes conectadas entre sí y que no tienen relaciones ocultas entre estos. Lo importante es que estas partes sean lo más simples y aisladas posibles de tal forma que no dificulte el entendimiento de estas.
+
+# 5.14.4.- Complejo es mejor que complicado
+
+Un sistema complicado se compone de elementos simples que no son independientes entre sí, sino que el sistema conoce de alguna lógica extra que convierte el sistema en complicado. Simple > Complejo > Complicado
+# 5.14.5.- Plano es mejor que anidado
+
+La capacidad de retención y comprensión de cada persona es limitada, por tanto si se anidan las sentencias en vez de mantenerlas lo más planas posibles, se suele mermar la capacidad cansando al lector del código. Una forma de aplanar un código anidado es usando funciones planas y otra podría ser usando listas por comprensión, aunque la segunda opción suele quedar muy densa fácilmente.
+
+# 5.14.6.- Disperso es mejor que denso
+
+Dejar Cuando se aumenta la densidad del código haciendo en pocas líneas muchas operaciones se puede hacer perder el foco del lector, por tanto es muy recomendable añadir espacios entre bloques lógicos.
+
+version densa
+print('    join(map(str , [x      2 forXin range(5)1)))
+
+version dispersa
+[x        forXinrange(5)]
+map(str,
+'join(b)
+print(c)
+
+# 5.14.7.- La legibilidad importa
+
+El código se escribe una vez pero se lee cientos de veces, por lo tanto es muy importante prestar especial atención a mejorar la legibilidad lo más posible, eligiendo los mejores nombres, separando funciones convenientemente o clases cuando son necesarios. Existen muchas técnicas para mejorarlo e incluso libros sobre este tema como los principios SOLID o los libros de Clean Code que son totalmente recomendables.
+
+* Los principios SOLID ilustrados con ejemplos de Python
+
+# 5.14.8.- Los casos especiales no son lo suficientemente especiales para romper reglas
+
+Cuando se definen unas reglas hay que cumplirlas, de lo contrario no tienen razón de existir. Los casos «especiales» son la excusa que se pone para romper las reglas pero realmente son sinónimo de «conozco las reglas pero en vez de cambiar el código para cumplirlas, prefiero romperlas», lo que debería de ser inadmisible dado que a la larga conlleva al desastre.
+
+# 5.14.9.- Los errores nunca deberían de ocurrir silenciosamente
+
+Cuando se trabaja bajo presión y se encuentran errores se tienden a ocultar o a tomar medidas demasiado drásticas como la siguiente:
+
+try:
+codigo_erroneo()
+except Exception:
+pass
+# 5.14.10.- A no ser que se silencien explícitamente
+
+Existen excepciones al caso anterior que se dan cuando se ha estudiado la situación, se conoce el error y explícitamente se silencia (o se actúa en consecuencia). Si el error que se ha detectado es un ValueError (por ejemplo) pero se sabe que no es problemático, se debe de manejar adecuadamente, incluso pudiendo ser silenciado.
+
+try= codigo_erroneo()
+except ValueError:
+logger . debug( 'Value Error manejado correctamente' )
+
+# 5.14.11.- En el caso de ambigüedad, rechaza la tentación de adivinar
+
+Este concepto aplica a muchos ámbitos del desarrollo, es mucho mejor tener claro qué se está construyendo y poder crear tests, que exactamente definan y comprueben el buen comportamiento del sistema, eliminando cualquier ambigüedad.
+
+# 5.14.12.- Debería de haber una – y preferiblemente sólo una – forma obvia de hacerlo
+
+Si la forma de implementar el problema no parece obvia, quizás no sea la más correcta y haya que seguir pensando en otra opción.
+
+# 5.14.13.- Ahora es mejor que nunca
+
+En el desarrollo de software siempre hay tareas que realizar y si no se priorizan las tareas importantes para hacerlas cuando salen los problemas, estos pueden alargarse en el tiempo hasta no hacerlas nunca.
+
+# 5.14.14.- Aunque nunca es a menudo mejor que ahora mismo
+
+Quiere decir que no hay que forzar la realización de tareas tanto como para dejar lo que se está desarrollando actualmente, para desarrollar una tarea nueva, evitando así el cambio de contexto.
+
+# 5.14.15.- Si la implementación es difícil de explicar, es una mala idea
+
+Esta regla suele aplicarse en muchos ámbitos en general, dado que si no eres capaz de explicar la idea de forma simple es que no la visualizas de forma simple por lo que quizás sea necesario consensuar la solución hasta tenerla clara.
+
+# 5.14.16.- Si la implementación es fácil de explicar, es una buena idea
+
+Cuando se puede explicar la idea a cualquier otra persona (o patito de goma) suele ser síntoma de tener los conceptos claros y de ser una solución genial.
+
+# 6.- Nomenclatura
+
+# 6.1.- Prefijo de identificación de tipo de dato
+
+Se identifica cada campo con su tipo de dato, para mayor rapidez en su identificación, manejo y transformación.
+
+| Prefijo | Nombre             | Tipo Dato                 | Descripción                                                                        |
+| ------- | ------------------ | ------------------------- | ---------------------------------------------------------------------------------- |
+| e       | Entero             | Integer, Smallint, Bigint | Tipo de datos numéricos enteros                                                    |
+| c       | Carácter           | Char-Varchar              | Tipo de datos alfanuméricos, dinámicos y estáticos.                                |
+| d       | Numero con Decimal | Decimal, Double, Float    | Tipo de dato numérico con precisión de decimales, Doble precision y punto flotante |
+| f       | Fecha              | Date                      | Tipo de dato fecha                                                                 |
+| t       | Tiempo             | Timestamp                 | Tipo de dato Fecha/Hora                                                            |
+
+# 6.2.- Prefijo de identificación de tablas dentro del proceso
+
+Se identifican los prefijos que deben tener los nombres de tablas de acuerdo a la necesidad de cada desarrollo. Por otro lado, los campos heredan el prefijo de acuerdo a la tabla que pertenecen.
+
+| Prefijo | Nombre área                    | Descripción                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S       | Staging                        | Tabla que contiene la primera fase de extracción desde el datawarehouse y que serán las estructuras de datos que consultaran los procesos de Pre-cálculo. Estas tablas generalmente se utilizan para procesar grandes volúmenes de datos de una sola vez o almacenar información universal. Permitiendo así, ser usados de manera global por cualquier desarrollo ahorrando tiempo de procesamiento y unificando conceptos. Estas no deben ser eliminadas en el procesamiento. |
+| P       | Pre-cálculo                    | Tabla intermedia entre Staging e input, donde se desarrollan los cálculos previos al resultado final del proceso. Al finalizar el procesamiento global (DAG) deben ser eliminadas.                                                                                                                                                                                                                                                                                             |
+| C       | Catálogo                       | Tabla donde se procesa y almacena los catálogos que contienen reglas de negocio y parámetros. Estas serán estáticas en el tiempo. Son tablas paramétricas. Este tipo de tablas se crean e insertan sus datos en un script aparte y existen de manera permanente.                                                                                                                                                                                                               |
+| T       | Temporal                       | Tabla que existe mientras se ejecuta un proceso. Al finalizar el DAG deben ser eliminadas.                                                                                                                                                                                                                                                                                                                                                                                     |
+| R       | Registro (Traza,Warning,Error) | Tabla donde se registran las operaciones de los procesos, la traza de negocio, los Warning que no detienen el flujo del proceso y los Errores que detienen el flujo. Este tipo de tablas se crean en un script aparte y existen de manera permanente.                                                                                                                                                                                                                          |
+| I       | Input                          | Tabla de resultados finales o conocidas también como tablas de salidas que pueden ser entrada de otro sistema y existen de manera permanente.                                                                                                                                                                                                                                                                                                                                  |
+
+# 6.3.- Prefijo de identificación de Campos
+
+Los campos de una tabla deben poseer un prefijo compuesto, es decir debe ser formado por la sigla del prefijo de la tabla a la cual pertenece, seguido por el prefijo del tipo de dato que lo define.
+
+Ejemplo: Tabla temporal y sus campos
+
+CREATE MULTISET TABLE MKT TMP INPUT TB             PRE TA MNA TASALEAKAGE 01
+TE PARTY ID                            INTEGER
+TE PERIODO REF                         INTEGER
+TF   FECHA REF DIA                     DATE FORMAT     YYYY MM DD
+TE FECHA APERTURA                      DATE FORMAT     YYYY-MM-DD
+TE OPERACION NOCONSIDERAR              INTEGER
+TE IND BCI                             INTEGER
+TC CANAL                              VARCHAR ( 9)  CHARACTER SET UNICODE NOT CASESPECIFIC
+TD VALOR                              DECIMAL(18,
+TE PERIODO REF MESES                   INTEGER
+PRIMARY INDEX      TE PARTYID
+
+# 6.4.- Prefijo de unidad de trabajo
+
+| Prefijo  | Descripción                 |
+| -------- | --------------------------- |
+| JNY      | Journey                     |
+| CRM20    | CRM 2.0                     |
+| AP       | Analytics Persona           |
+| AE       | Analytics Empresa           |
+| AE\_PYME | Analytics Empresa Pyme      |
+| AE\_WSL  | Analytics Empresa Wholesale |
+| MO       | MLOps - Monitoreo           |
+| ONP      | On premise                  |
+| CMP      | Campaña                     |
+| AX       | Analytics Experiencia       |
+| ECO      | Ecosistema digital          |
+| AI       | Analytics Inversiones       |
+| UTC      | Unidad Técnica de Campaña   |
+| SEG      | Seguimiento                 |
+| DOMBCI   | Dominio Bci                 |
+| DOMCRM   | Dominio CRM                 |
+| DOMMO    | Dominio Bci monitoreo       |
+
+# 6.5.- Prefijo de Producto
+
+| Prefijo | Descripción             |
+| ------- | ----------------------- |
+| CCT     | Cuenta corriente        |
+| CON     | Colocaciones de consumo |
+
+# TCR
+
+Tarjeta de Crédito
+
+# LSG
+
+Línea de sobregiro
+
+# COM
+
+Colocaciones Comerciales
+
+# PAT
+
+Pago automático de tarjeta
+
+# PAC
+
+Pago automático de cuenta
+
+# CCX
+
+Cuenta corriente moneda extranjera
+
+# ONB
+
+On Boarding
+
+# BGT
+
+Boleta de Garantía
+
+# BEL
+
+Banca electronica
+
+# VV
+
+Vales Vista
+
+# AHO
+
+Ahorro
+
+# FM
+
+Fondo Mutuos
+
+# HIP
+
+Créditos Hipotecarios
+
+# DAP
+
+Depósito a plazo
+
+# LEA
+
+Leasing
+
+# FAC
+
+Factoring
+
+# PNOL
+
+Pago de nomina en línea
+
+# MMPP
+
+Medios de Pago
+
+# INV
+
+Inversiones
+
+# DFINV
+
+Digital First Inversiones
+
+# BPRIV
+
+Banca Privada Inversiones
+
+# PLN
+
+Planes
+
+# RSG
+
+Riesgo
+
+# MDD
+
+Mesa de Dinero
+
+# SEG
+
+Seguros
+
+# ADH
+
+Adherencia Clientes Personas Digital
+
+# HAB
+
+Habilitación de Clientes Persona
+
+# LOY
+
+Loyalty, Fidelización de Clientes (BciPlus+)
+
+# SER
+
+Quiebres de Servicios y Experiencia
+
+# 6.6.- Nomenclatura de tablas
+
+# 6.6.1.- Tablas temporales
+
+Son tablas que existen mientras se ejecuta un proceso. Al finalizar el DAG deben ser eliminadas. Estas tablas además de iniciar con el prefijo mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: PrefijoT_PrefijoUnidad_[PrefijoProducto]_Contexto
+
+Ejemplo nombre de tabla según Nomenclatura
+
+- T_CMP_CON_Fechas
+- T_CMP_CON_Detalle_Respuesta
+- T_CMP_CON_PrimerVencimiento
+# 6.6.2.- Tablas Staging
+
+Las Tablas de staging son tablas que contienen la primera fase de extracción desde el datawarehouse y que serán las estructuras de datos que consultaran los procesos de pre-cálculo.
+
+Estas tablas generalmente se utilizan para procesar grandes volúmenes de datos de una sola vez o almacenar información universal. Permitiendo así, ser usados de manera global por cualquier desarrollo ahorrando tiempo de procesamiento y unificando conceptos. Estas no deben ser eliminadas en el procesamiento.
+
+Las tablas de staging además de iniciar con el prefijo (S) ya mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: Prefijo S_Contexto
+
+Ejemplo nombre de tabla según Nomenclatura:
+
+- S_Persona
+- S_Empresa
+- S_Jen
+
+El conjunto de tablas de staging es acotado y se debe explorar su existencia antes de crear una nueva tabla, no tiene otros prefijos porque pueden ser usadas para toda la corporación con los accesos pertinentes.
+
+# 6.6.3.- Nomenclatura tablas Precálculo
+
+Tabla intermedia entre Staging e input, donde se desarrollan los cálculos previos al resultado final del proceso. Al finalizar el procesamiento global (DAG) deben ser eliminadas.
+
+Las tablas de pre cálculo además de iniciar con el prefijo (P) mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: Prefijo P_PrefijoUnidad_[PrefijoProducto]_Contexto
+
+Ejemplo nombre de tabla según Nomenclatura:
+
+- P_CMP_CON_Detalle_Respuesta
+- P_JNY_EjecutivoCabecera
+
+# 6.6.4.- Nomenclatura tablas Input
+
+Tabla de resultados finales o conocidas también como tablas de salidas que pueden ser entrada de otro sistema y existen de manera permanente.
+
+Las tablas Input además de iniciar con el prefijo (I) mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: Prefijo I_PrefijoUnidad_[PrefijoProducto]_Contexto
+
+Ejemplo nombre de tabla según Nomenclatura:
+
+- I_JNY_HIP_ClienteCierreChip
+
+# 6.6.5.- Nomenclatura tablas Catálogo
+
+Tabla donde se procesa y almacena los catálogos que contienen reglas de negocio y parámetros. Estas serán estáticas en el tiempo. Son tablas paramétricas.
+
+Este tipo de tablas se crean e insertan sus datos en un script aparte y existen de manera permanente.
+
+Las tablas de catálogo además de iniciar con el prefijo (C) mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: Prefijo C_PrefijoUnidad_[PrefijoProducto]_Contexto
+
+Ejemplo nombre de tabla según Nomenclatura:
+# 6.6.6.- Nomenclatura tablas Registro
+
+Tabla donde se registran las operaciones de los procesos, la traza de negocio, los Warning que no detienen el flujo del proceso y los Errores que detienen el flujo. Este tipo de tablas se crean en un script aparte y existen de manera permanente. Las tablas registro además de iniciar con el prefijo (R) mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: PrefijoR_PrefijoUnidad_[PrefijoProducto]_Contexto
+
+Ejemplo nombre de tabla según Nomenclatura:
+
+R_CMP_CON_TrazaProceso
+
+# 6.7.- Nomenclatura Bteq
+
+Las bteqs además de iniciar con el prefijo numérico mencionado anteriormente debe tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: Numeral_VerboDescriptivo_ContextoBteq[_TipodeSalida].sql
+
+VerboDescriptivo: Calcular, Filtrar, Cruzar, Generar
+
+Ejemplo nombre de bteq según Nomenclatura:
+
+- 001_Calcular_Variables_Demo.sql
+- 002_Filtrar_ExclusionesdeRiesgo.sql
+- 003_Generar_nominacuentacorrentista_csv.sql
+
+# 6.8.- Nomenclatura de un DAG
+
+La nomenclatura para los DAG la separaremos en dos tipos, uno para los DAG perteneciente a un Journey y todos los demás.
+
+# 6.8.1.- DAG para un Journey
+
+Este tipo de DAG deben tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: PrefijoUnidadJNY_Correlativo_PrefijoProductoCorrelativo_NombreJourney
+
+Ejemplo:
+
+- JNY_002_PLN002_TUBO_VENTA_CCT
+- JNY_002_PLNOO2_TUBO_VENTA_CCT
+- BTEQs
+- LOGs
+- JNY_002_PLNOO2_TUBO_VENTA_CCT.py
+
+Recordar que debemos situar DAGs en carpeta dags_develop -> journey_builder. Tanto Nombre del DAG, Archivo .py como carpeta del journey deben coincidir.
+
+# 6.8.2.- DAG Analytics
+
+Este tipo de DAG deben tener un nombre compuesto de la siguiente forma:
+
+Nomenclatura: PrefijoUnidad_Clasificación_NombreProceso
+
+Primero que todo, definiremos la clasificación como un numeral que está dentro de ciertos rangos de acuerdo a la temporalidad del DAG. Como muestra la figura.
+# Diaria [000-099]
+
+# Input Analitico Seranal [100-199]
+
+# Mensual [200-299]
+
+# DAGs Persona
+
+# Analisis Segmentacion [300-399]
+
+# Activos Analiticos
+
+# Modelos [400-499]
+
+# Repones [500-599]
+
+Nomenclatura: PrefijoUnidad_Clasificación_NombreProceso
+
+Ejemplo nombre del DAG según Nomenclatura
+
+- AP_101_CambioEjecutivo
+- AE_202_CalculoDeuda
+- AP_302_Seg_Estrategica_clientes
+
+Recordar que debemos situar DAGs en carpeta dags_develop -> journey_builder
+
+Tanto Nombre del DAG, Archivo .py como carpeta del journey deben coincidir.
+
+# 6.8.3.- DAG Dominio BCI
+
+Este tipo de DAG deben tener un nombre compuesto de la siguiente forma.
+
+Nomenclatura: Origen_Correlativo[_Gnumeral][_A-Z]_PrefijoUnidad_TBLTeradata
+
+Origen: Corresponde a la fuente origen de los datos.
+
+| Prefijo Origen | Descripción |
+| -------------- | ----------- |
+| APG            | API GOOGLE  |
+| FTP            | FTP         |
+| MSSQL          | SQL SERVER  |
+| MYSQL          | MYSQL       |
+| SPK            | SPLUNK      |
+| MNB            | Mongo DB    |
+| SFTP           | SFTP        |
+| TDT            | TERADATA    |
+| JDBC           | SYBASE-JDBC |
+| PGSQL          | POSTGRESQL  |
+
+Ejemplo de nombre de DAG
+
+- APG_001_DOMBCI_I_CCL_GA
+- PGSQL_001_DOMBCI_I_MMPP_PUNTOS_CANJE_NAPP
+- APG_002_G1_DOMBCI_I_LISTA_NEGRA
+- MSSQL_001_G2_DOMBCI_I_CRM_PYME_PERFIL_RIESGO
+- TDT_006_G1_DOMBCI_I_MA_DBC
+- MYSQL_001_G2_A_DOMBCI_I_CRMPYME_HAZTE_CLIENTE
+# 6.9.- Nomenclatura de un TASK
+
+Se necesita identificar de la siguiente forma los nombres de los task que conforman los DAGs, de la misma manera que los bteq pero sin la extensión .sql:
+
+Nomenclatura: Numeral_VerboDescriptivo_ContextoBteq[_TipodeSalida]
+
+VerboDescriptivo: Calcular, Filtrar, Cruzar, Generar
+
+Ejemplo nombre de bteq según Nomenclatura
+
+- 001_Calcular_Variables_Demo
+- 002_Filtrar_ExclusionesdeRiesgo
+- 003_Generar_nominacuentacorrentista_csv
+
+# 7.- (WIP) Data Quality
+
+Data quality:
+
+1. Entrada: Se debe desarrollar un Data Quality de las fuentes que va a consumir el proceso antes de iniciar, para alertar de cualquier falla por datos de entrada.
+2. Salida: El analista debe desarrollar un proceso de Data Quality de las tablas de salida, para asegurar que los resultados obtenidos son los esperados.
+
+# 8.- Databricks
+
+Se creó el espacio Normativa Databricks para guiar a los científicos de datos en el desarrollo de los modelos analíticos en Databricks, considerando aspectos de ingeniería de datos, featuring engeenering, desarrollo de modelos, productivización, inferencia y observability.
+
+En este espacio se abordan en profundidad los siguientes temas:
+
+- Clusters
+- Git (Github)
+- Buenas prácticas
+- Ingeniería de Datos
+- Feature Store
+- Modelos
+- Observability de Datos y ML
+- Paso a producción
+- Troubleshooting
+- Airflow
+
+# 9.- R
+
+# 9.1.- Respecto del print()
+
+Cada función, cálculo de variable, etc. Cualquier proceso que se ejecute dentro del R debe contar con un título dentro de un print() para que se muestre en el log de Airflow, para que en caso de que presente un error, identificar fácilmente dónde se ubica el mismo.
+
+Lo que no se debe hacer:
+
+El ejemplo muestra un bloque de cálculos de variables que no tienen prints más que el inicial “obteniendo simulador web” si en el cálculo de las variables que se muestran hay un error, no podremos especificar en cual a menos que se pruebe 1 a 1.
+
+Jniere, tabcur Kaheni Hantala Labsul
+
+Lo correcto:
+En el ejemplo se puede apreciar que por cada variable hay un título que en el log mostrara mas detalle sobre donde hay un error.
+
+# 9.2.- Respecto de los comentarios
+
+Describir claramente a través de un comentario la finalidad de cada función o que contiene cada variable que se calcula en R.
+
+Lo que no se debe hacer:
+
+El ejemplo muestra que la descripción no especifica mucho sobre la razón de clonar las bases
+
+#clona bases#
+sysJhi_           sysJhi
+sysJcu_a  sysJcu
+sysEve_a  sysEve
+sysstt_a  sysStt
+
+Lo correcto:
+
+En el ejemplo se Especifica la finalidad de clonar las bases.
+
+Clone bases para que cuando  realice la subida de intormacion,solo suba lo nuevo
+FysJhi_a  sysJhi
+sysJcu_a  sysJcu
+sysEve    sysEve
+sysstt    sysstt
+
+# 9.3.- Respecto de sql o bteq en R
+
+Solo se deben ejecutar BTEQs o queries en R que necesiten funcionalidades propias del R. De lo contrario se debe realizar un archivo SQL que contenga dicha consulta.
+
+Lo que no se debe hacer:
+
+Aquí se observa que la única función del archivo R es la de ejecutar el proceso, sin aplicar funciones que modifiquen o alteren la data obtenida por la BTEQ a la cual está llamando.
+
+nte
+tudalo
+True]
+uerie
+
+Lo correcto:
+
+Se debe ejecutar la BTEQ por cuenta propia (Bteq operator), sin que lo gatille el R.
+# 9.4.- Respecto de los encabezados
+
+Cada script en R debe contar con un encabezado, con el autor, descripción general del proceso, fecha de creación, funciones que utiliza y en caso de que aplique, tablas que utilice como fuente.
+
+# Lo que no se debe hacer:
+
+Encabezado del R solo con una descripción muy ambigua, sin autor, ni fecha de creación.
+
+####################################################
+Funcion produccion Clusters de Vinculacion Pyme #
+Setup airflow
+usuario          Sys.getenv( "TD_USER" ) # Obteniendo el user productivo
+pass <- Sys.getenv("TD_PASS" ) # Obteniendo el pass productivo
+
+# Lo correcto:
+
+Mayor detalle del R.
+
+##################
+# Descripcion: Descripcion detallada del proceso                                                           #
+Autor: Nombre Autor                                                                                      #
+Fecha: YYYY-MM                                                                                          #
+Funciones Bci: funcionl                                                                                 #
+funcion2                                                                      #
+Tablas de Entrada: Tablal                                                                               #
+Tablaz                                                                 #
+Tabla3                                                                 #
+# Tabla de Salida: Tabla_Salida                                                                             #
+
+# 9.5.- Respecto de las variables
+
+El nombre de cada variable debería representar lo que contiene la variable.
+
+# Lo que no se debe hacer:
+
+La variable “pp” contiene la estructura de la tabla de fechas, su nombre no guarda relación.
+
+Pp          db_pull(tera,                    mkt crmanalytics_tb.s_stg_emp_la_fechas_carga" )
+
+# Lo correcto:
+
+Con el nombre df_tbl_fecha estamos indicando que es un Data Frame, y que contiene la tabla fecha.
+
+df tbl_fecha                   db                                         analytics_tb.s_stg_emp Ja_fechas_carga"
+~pull
+4 -                (tera,         'mkt crm
+
+# 9.6.- Respecto del nombre de los archivos
+
+Estos deben ser descriptivos y terminar en .R. No se deben usar caracteres especiales ni tampoco espacios dentro del nombre del script. De preferencia usar minúsculas.
+
+# Lo correcto:
+# 9.7.- Respecto del orden de ejecución
+
+Si los scripts tienen un orden lógico de ejecución estos deben ir con un prefijo numérico.
+
+Lo correcto:
+
+00 download.R
+01 explore.R
+09 model.R
+10 visualize.R
+
+# 9.8.- Respecto de la estructura interna
+
+Para dividir el archivo en partes más pequeñas y fáciles de leer es bueno usar líneas comentadas con - y =
+
+Lo correcto:
+
+Load data
+Plot data
+
+# 9.9.- Respecto de los nombres de los objetos
+
+Para nombres de variables y funciones se deben usar sólo letras minúsculas, números y _. Use guiones bajos ( _)
+
+Lo que no se debe hacer:
+
+# Bad
+DayOne
+dayone
+
+Lo correcto:
+
+# Good
+day_one
+day_
+
+Para nombre de variables use sustantivos y para funciones deben ser verbos.
+
+Lo que no se debe hacer:
+
+Bud                                                     Bad
+first_day_of_the_month                                   Fow_aueru
+ajml                                                    pernutazion
+
+Lo correcto:
+
+0 Gocd                                                    Gooo
+uy _ᵒⁿᵉ                                                    4d roN  )
+Pernutel )
+
+Evite usar palabras comunes o valores de sistema para no confundir al lector Ej. var1, variable_1, T &lt;- FALSE, mean &lt;- function(x) sum(x)
+
+# 9.10.- Respecto del espaciado
+
+Comas: Siempre ponga un espacio después de una coma, nunca antes.
+# Lo que no se debe hacer:
+
+Bad
+
+Xl1i
+
+# Lo correcto:
+
+Good
+
+xl, 1]
+
+Paréntesis: No ponga espacios dentro o fuera de los paréntesis para las llamadas a funciones.
+
+# Lo que no se debe hacer:
+
+ba0
+
+0c4n n.m
+
+# Lo correcto:
+
+CcJL
+
+Ceod
+
+neaai, TR F
+
+# Operadores:
+
+Los operadores ( ==, +, -, <-, etc.) siempre deben estar rodeados de espacios
+
+# Lo que no se debe hacer:
+
+# Bad
+
+height<-feet*lZ+inches
+
+mean (X, na. rm-TRUE _
+
+# Lo correcto:
+
+# Good
+
+height (feet 12 ) inches
+
+mean (x, na.rm TRUE)
+
+Hay algunas excepciones, que nunca deben estar rodeadas de espacios
+
+(::, :::, $, @, [, [[, ^, unary -, unary +, : )
+
+# Lo que no se debe hacer:
+
+Bad
+
+d
+
+Bad
+
+Soc * Y 27
+
+cf 5 2
+
+Lal; ColZ,
+
+1 10
+
+# Lo correcto:
+
+Cjod
+
+Lada
+
+snc(x 2 Yi
+
+Good
+
+0f%
+
+1018
+
+"y
+
+# 9.11.- Asignación al llamar una función
+
+Se debe hacer una asignación al llamar una función en una sola linea y luego evaluar el resultado
+
+# Lo que no se debe hacer:
+# 9.12.- Bloques de código
+
+Las llaves {} definen la jerarquía dentro de las declaraciones en R, debe seguir la siguiente estructura dentro de las anidaciones:
+
+- { debe ser el último valor por línea
+- La indentación deben ser dos espacios
+- } debe ser el primer carácter por línea
+
+# Lo que no se debe hacer:
+
+# Bad
+if (nzchar(x <- complicated_function ( ) ) 1) {
+# do something
+}
+
+# Lo correcto:
+
+# Good
+complicated_function( )
+if (nzchar(x) 1) {
+# do something
+}
+
+La única excepción es en funciones que capturan efectos secundarios:
+
+output C7 capture.output (x 2= f())
+
+# 9.13.- Largo de las líneas de código
+
+Lo ideal es limitar por línea un máximo de 80 caracteres. De esta forma el código se verá más ordenado y encapsulado.
+
+# Lo que no se debe hacer:
+
+# Bad
+do_something_very_complicated ( "that" requires many, arguments,
+"some of which may be long"
+
+# Lo correcto:
+# 9.14.- Punto y coma
+
+No lo coloque ; al final de una línea y no lo use ; para colocar varios comandos en una línea.
+
+# 9.15.- Carácter de asignación
+
+Use &lt;- , no = para asignar.
+
+Lo que no se debe hacer:
+
+# Bad
+X = 5
+
+Lo correcto:
+
+# Good
+X &lt; 5
+
+# 9.16.- Comentarios
+
+Cada línea que sea un comentario debe comenzar con un #. Use los comentarios para describir lo que está haciendo, hallazgos importantes y decisiones que se tomaron cuando realizaba el análisis.
+
+# 9.17.- Largo de los argumentos de una función
+
+Si los argumentos no caben en una sola línea declare cada uno en una línea propia.
+
+Lo correcto:
+
+iris %2%
+group_by (Species) %9> %
+summarise(
+Sepal.Length            mean (Sepal.Length)
+Sepal.Width             mean (Sepal.Width)
+Species                 n_distinct (Species)
+
+# 9.18.- Formas de asignar
+
+Se aceptan estas tres formas para este ítem.
+
+ris_Iona                                         iris_long      iris %9                               Lris
+iris                                              gather(measure, value,     Species)                 gatner(neasure_value  ~species |
+qatherimeasure, value,  -Spec Tes|                arrange(-value)                                     arrnge valuc)
+arrange  valuc |                                                                                      Iris_long

@@ -1,0 +1,115 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel", "build"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-ia-teradata"
+version = "2.0.0"
+description = "Advanced RAG-Powered Teradata SQL Query Optimization System with Multi-Agent Architecture"
+authors = [
+    {name = "Carlos García", email = "cgarcci@company.com"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+keywords = [
+    "teradata", "sql", "optimization", "rag", "langchain", 
+    "langgraph", "ai", "query-analysis", "multi-agent"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Database Administrators", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "langchain>=0.2.16",
+    "langchain-core>=0.2.33",
+    "langchain-community>=0.2.16",
+    "langchain-openai>=0.1.22",
+    "langchain-chroma>=0.1.4",
+    "langchain-huggingface>=0.0.3",
+    "langgraph>=0.2.16",
+    "langsmith>=0.1.104",
+    "openai>=1.42.0",
+    "azure-openai>=1.0.0",
+    "chromadb>=0.5.5",
+    "sentence-transformers>=3.0.1",
+    "transformers>=4.44.2",
+    "torch>=2.4.1",
+    "fastapi>=0.112.1",
+    "uvicorn[standard]>=0.30.6",
+    "pydantic>=2.8.2",
+    "httpx>=0.27.0",
+    "pandas>=2.2.2",
+    "numpy>=2.0.1",
+    "sqlalchemy>=2.0.32",
+    "python-dotenv>=1.0.1",
+    "pyyaml>=6.0.2",
+    "rich>=13.7.1",
+    "tiktoken>=0.7.0"
+]
+    "sentence-transformers>=2.2.2",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "teradatasql>=17.20.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.1",
+    "pandas>=2.1.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.7.0",
+    "jupyter>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
