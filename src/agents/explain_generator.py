@@ -5,21 +5,28 @@ Enhanced Explain Generator with comprehensive MCP timeout protection.
 import logging
 import asyncio
 import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-# Importaciones necesarias para MCP
+# Importaciones necesarias
+import httpx
+
+# Importaciones MCP (opcionales)
 try:
     from langchain_openai import AzureChatOpenAI
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-    import httpx
 except ImportError as e:
     logging.warning(f"MCP dependencies not available: {e}")
+    # Define stubs for MCP classes if not available
+    ClientSession = object
+    StdioServerParameters = object
+    stdio_client = None
 
 from pydantic import BaseModel, Field
 from config.settings import settings
+from datetime import datetime
 
 
 class EnhancedExplainResult(BaseModel):
@@ -128,19 +135,31 @@ class EnhancedTeradataMCPClient:
             processing_time = (datetime.now() - start_time).total_seconds()
             self.logger.info(f"[MCP-SUCCESS] {operation_name} completed in {processing_time:.2f}s")
             
-            return result, None, False  # result, error, timeout_occurred
+            if isinstance(result, dict):
+                return result
+            return {"content": str(result), "success": True}
             
         except asyncio.TimeoutError:
             processing_time = (datetime.now() - start_time).total_seconds()
             error_msg = f"[MCP-TIMEOUT] {operation_name} timed out after {timeout}s"
             self.logger.warning(error_msg)
-            return None, error_msg, True
+            return {
+                "error": error_msg,
+                "timeout_occurred": True,
+                "fallback_needed": True,
+                "success": False
+            }
             
         except Exception as e:
             processing_time = (datetime.now() - start_time).total_seconds()
             error_msg = f"[MCP-ERROR] {operation_name} failed: {str(e)}"
             self.logger.error(error_msg)
-            return None, error_msg, False
+            return {
+                "error": error_msg,
+                "timeout_occurred": False,
+                "fallback_needed": True,
+                "success": False
+            }
     
     async def initialize_with_fallback(self) -> bool:
         """Initialize MCP connection with multiple attempts and fallback."""
@@ -157,13 +176,13 @@ class EnhancedTeradataMCPClient:
                         await self._initialize_http()
                     return True
                 
-                result, error, timeout_occurred = await self.safe_operation(
+                result = await self.safe_operation(
                     init_operation,
                     f"MCPInitialization_Attempt{attempt}",
                     self.config.connection_timeout
                 )
                 
-                if result:
+                if result.get("success", False):
                     self.logger.info(f"[MCP-INIT] Successfully initialized on attempt {attempt}")
                     return True
                     
@@ -274,10 +293,19 @@ class EnhancedTeradataMCPClient:
         async def execute_operation():
             if self.session:
                 # STDIO execution
+                self.logger.info(f"[MCP-EXECUTE] Executing query via STDIO: {query[:100]}...")
                 result = await self.session.call_tool("execute_query", {"query": query})
-                return {"content": result.content[0].text if result.content else "No result"}
+                self.logger.info(f"[MCP-EXECUTE] Raw result type: {type(result)}")
+                self.logger.info(f"[MCP-EXECUTE] Result content length: {len(result.content) if result.content else 0}")
+                
+                content = result.content[0].text if result.content else "No result"
+                self.logger.info(f"[MCP-EXECUTE] Extracted content length: {len(content) if content else 0}")
+                self.logger.info(f"[MCP-EXECUTE] Content preview: {content[:200]}...")
+                
+                return {"content": content}
             elif self.http_client:
                 # HTTP execution
+                self.logger.info(f"[MCP-EXECUTE] Executing query via HTTP: {query[:100]}...")
                 payload = {
                     "query": query,
                     "database_uri": self.config.database_uri
@@ -286,26 +314,78 @@ class EnhancedTeradataMCPClient:
                     f"{self.config.server_url}/execute",
                     json=payload
                 )
+                self.logger.info(f"[MCP-EXECUTE] HTTP response status: {response.status_code}")
+                
                 if response.status_code == 200:
-                    return response.json()
+                    json_result = response.json()
+                    self.logger.info(f"[MCP-EXECUTE] HTTP JSON keys: {list(json_result.keys()) if json_result else 'None'}")
+                    
+                    # Extract the actual EXPLAIN plan content from the MCP response
+                    if json_result.get('success') and json_result.get('rows'):
+                        # The EXPLAIN plan is in the rows array
+                        rows = json_result.get('rows', [])
+                        self.logger.info(f"[MCP-EXECUTE] Processing {len(rows)} rows from EXPLAIN result")
+                        
+                        if rows:
+                            # Convert rows to readable EXPLAIN plan format
+                            plan_lines = []
+                            for i, row in enumerate(rows):
+                                if isinstance(row, dict):
+                                    # Extract all values from the dictionary
+                                    if 'explain_plan' in row:
+                                        plan_lines.append(f"EXPLAIN: {row['explain_plan']}")
+                                    elif 'step' in row:
+                                        plan_lines.append(row['step'])
+                                    elif 'metadata' in row:
+                                        plan_lines.append(f"METADATA: {row['metadata']}")
+                                    else:
+                                        # Generic handling for other dictionary structures
+                                        for key, value in row.items():
+                                            plan_lines.append(f"{key.upper()}: {value}")
+                                elif isinstance(row, list):
+                                    plan_lines.append('\t'.join(str(cell) for cell in row))
+                                else:
+                                    plan_lines.append(str(row))
+                            
+                            explain_content = '\n'.join(plan_lines)
+                            self.logger.info(f"[MCP-EXECUTE] Extracted EXPLAIN content ({len(explain_content)} chars): {explain_content[:200]}...")
+                            return {"content": explain_content, "success": True, "rows": rows, "metadata": json_result.get('metadata')}
+                        else:
+                            self.logger.warning("[MCP-EXECUTE] No rows in successful response")
+                            return {"content": "No EXPLAIN data returned", "success": True}
+                    elif json_result.get('error'):
+                        error_msg = json_result.get('error')
+                        self.logger.error(f"[MCP-EXECUTE] MCP server error: {error_msg}")
+                        return {"error": error_msg}
+                    else:
+                        self.logger.warning(f"[MCP-EXECUTE] Unexpected response structure: success={json_result.get('success')}, has_rows={bool(json_result.get('rows'))}")
+                        # Still return the original response in case there's useful data elsewhere
+                        return json_result
                 else:
-                    return {"error": f"HTTP {response.status_code}: {response.text}"}
+                    error_msg = f"HTTP {response.status_code}: {response.text}"
+                    self.logger.error(f"[MCP-EXECUTE] HTTP error: {error_msg}")
+                    return {"error": error_msg}
             
+            self.logger.error("[MCP-EXECUTE] No transport available")
             return {"error": "No transport available"}
         
-        result, error, timeout_occurred = await self.safe_operation(
-            execute_operation,
-            "ExecuteQuery",
-            self.config.operation_timeout
-        )
-        
-        if result:
+        try:
+            result = await self.safe_operation(
+                execute_operation,
+                "ExecuteQuery",
+                self.config.operation_timeout
+            )
+            self.logger.info(f"[MCP-EXECUTE] Final result type: {type(result)}")
+            if isinstance(result, tuple):
+                self.logger.info(f"[MCP-EXECUTE] Tuple result: success={result[0]}, content_preview={str(result[1])[:100] if result[1] else 'None'}")
+                return result[1] if result[0] else {"error": str(result[2])}
             return result
-        else:
-            # Return error information for fallback handling
+        except Exception as e:
+            error_msg = f"Execute query failed: {str(e)}"
+            self.logger.error(f"[MCP-EXECUTE] Exception: {error_msg}")
             return {
-                "error": error,
-                "timeout_occurred": timeout_occurred,
+                "error": error_msg,
+                "timeout_occurred": False,
                 "fallback_needed": True
             }
     
@@ -345,9 +425,9 @@ class EnhancedExplainGenerator:
         
         # Enhanced configuration
         self.config = EnhancedTeradataConnectionConfig(
-            database_uri=getattr(settings, 'DATABASE_URI', 'teradata://localhost:1025/test'),
+            database_uri=getattr(settings, 'database_uri', 'teradata://localhost:1025/test'),
             transport_type=getattr(settings, 'MCP_TRANSPORT', 'http'),
-            server_url=getattr(settings, 'MCP_SERVER_URL', 'http://localhost:8000'),
+            server_url=getattr(settings, 'teradata_mcp_server_url', 'http://localhost:3002'),
             connection_timeout=15.0,
             operation_timeout=20.0,
             max_retries=3,
@@ -405,6 +485,84 @@ class EnhancedExplainGenerator:
             self.logger.error(f"[EXPLAIN-GEN] Initialization error: {e}")
             return True  # Still return True for fallback mode
     
+    async def generate_explain(self, sql_query: str) -> EnhancedExplainResult:
+        """Generate EXPLAIN with comprehensive timeout protection. Main entry point."""
+        start_time = datetime.now()
+        try:
+            # Initialize result with default values
+            result = EnhancedExplainResult(
+                explain_plan="",
+                success=False,
+                error_message=None,
+                query_cost=None,
+                execution_time=None,
+                warnings=[],
+                timeout_occurred=False,
+                fallback_used=False,
+                connection_attempts=0,
+                processing_time=0.0,
+                mcp_tools_used=[]
+            )
+
+            # Try to get actual EXPLAIN from MCP
+            connection_attempts = 1
+            fallback_used = False
+            timeout_occurred = False
+
+            if self.client:
+                explain_query = f"EXPLAIN {sql_query}"
+                mcp_result = await self.client.execute_query_enhanced(explain_query)
+                
+                if isinstance(mcp_result, dict):
+                    if mcp_result.get("error") or mcp_result.get("fallback_needed"):
+                        timeout_occurred = mcp_result.get("timeout_occurred", False)
+                        fallback_used = True
+                        error_message = mcp_result.get("error")
+                        self.logger.warning(f"[EXPLAIN] MCP failed, using fallback: {error_message}")
+                    else:
+                        # Success with MCP
+                        result.explain_plan = str(mcp_result.get("content", "No plan available"))
+                        result.success = True
+                        result.mcp_tools_used = ["execute_query"]
+                        result.timeout_occurred = False
+                        result.fallback_used = False
+                        result.connection_attempts = connection_attempts
+                        result.processing_time = (datetime.now() - start_time).total_seconds()
+                        return result
+
+            # If we get here, we need to use fallback
+            plan_type = self._detect_query_type(sql_query)
+            fallback_plan = self.fallback_plans.get(plan_type, self.fallback_plans["default"])
+            customized_plan = self._customize_fallback_plan(fallback_plan, sql_query, timeout_occurred)
+            
+            result.explain_plan = customized_plan
+            result.success = True
+            result.warnings = ["Using fallback EXPLAIN plan due to MCP unavailability"]
+            result.timeout_occurred = timeout_occurred
+            result.fallback_used = True
+            result.connection_attempts = connection_attempts
+            result.processing_time = (datetime.now() - start_time).total_seconds()
+            return result
+
+        except Exception as e:
+            processing_time = (datetime.now() - start_time).total_seconds()
+            error_msg = f"EXPLAIN generation failed: {str(e)}"
+            self.logger.error(error_msg)
+            
+            return EnhancedExplainResult(
+                explain_plan=self.fallback_plans["default"],
+                success=False,
+                error_message=error_msg,
+                warnings=["Critical error - using minimal fallback plan"],
+                timeout_occurred=timeout_occurred,
+                fallback_used=True,
+                connection_attempts=connection_attempts,
+                processing_time=processing_time,
+                query_cost=None,
+                execution_time=None,
+                mcp_tools_used=[]
+            )
+
     async def generate_explain_plan(self, query: str) -> EnhancedExplainResult:
         """Generate EXPLAIN plan with comprehensive timeout protection."""
         start_time = datetime.now()
@@ -418,29 +576,103 @@ class EnhancedExplainGenerator:
                 
                 # Try to get actual EXPLAIN from MCP
                 explain_query = f"EXPLAIN {query}"
+                self.logger.info(f"[EXPLAIN-GEN] Executing EXPLAIN query: {explain_query[:100]}...")
                 result = await self.client.execute_query_enhanced(explain_query)
                 
-                if result.get("error") or result.get("fallback_needed"):
-                    timeout_occurred = result.get("timeout_occurred", False)
+                self.logger.info(f"[EXPLAIN-GEN] MCP result type: {type(result)}")
+                self.logger.info(f"[EXPLAIN-GEN] MCP result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                
+                # Check for errors or fallback needed
+                if isinstance(result, dict) and (result.get("error") or result.get("fallback_needed")):
+                    timeout_occurred = result.get("timeout_occurred", False) 
                     fallback_used = True
-                    self.logger.warning(f"[EXPLAIN] MCP failed, using fallback: {result.get('error')}")
+                    error_message = result.get("error")
+                    self.logger.warning(f"[EXPLAIN-GEN] MCP failed, using fallback: {error_message}")
                 else:
                     # Success with MCP
                     processing_time = (datetime.now() - start_time).total_seconds()
+                    
+                    if isinstance(result, dict):
+                        # Log the full structure for debugging
+                        self.logger.info(f"[EXPLAIN-GEN] Result structure: {list(result.keys()) if result else 'Empty'}")
+                        
+                        # Try different keys where the EXPLAIN content might be
+                        explain_content = (
+                            result.get("content") or 
+                            result.get("result") or 
+                            result.get("rows") or
+                            result.get("data")
+                        )
+                        
+                        self.logger.info(f"[EXPLAIN-GEN] Raw explain_content type: {type(explain_content)}")
+                        self.logger.info(f"[EXPLAIN-GEN] Raw explain_content: {str(explain_content)[:300] if explain_content else 'None'}")
+                        
+                        # If explain_content is a list (rows), convert to string
+                        if isinstance(explain_content, list):
+                            if explain_content:  # Non-empty list
+                                if isinstance(explain_content[0], dict):
+                                    # Format dictionary rows nicely
+                                    plan_lines = []
+                                    for row in explain_content:
+                                        line_parts = []
+                                        for key, value in row.items():
+                                            line_parts.append(f"{key}: {value}")
+                                        plan_lines.append(" | ".join(line_parts))
+                                    explain_content = "\n".join(plan_lines)
+                                else:
+                                    # Simple list, join with newlines
+                                    explain_content = "\n".join(str(row) for row in explain_content)
+                            else:
+                                explain_content = "Empty result set"
+                        
+                        # Additional check for MCP success flag
+                        if result.get("success") is False and result.get("error"):
+                            self.logger.warning(f"[EXPLAIN-GEN] MCP reported error: {result.get('error')}")
+                            fallback_used = True
+                            plan_type = self._detect_query_type(query)
+                            explain_content = self._customize_fallback_plan(
+                                self.fallback_plans.get(plan_type, self.fallback_plans["default"]), 
+                                query, 
+                                False
+                            )
+                    else:
+                        explain_content = str(result)
+                    
+                    self.logger.info(f"[EXPLAIN-GEN] Success! Content length: {len(str(explain_content)) if explain_content else 0}")
+                    self.logger.info(f"[EXPLAIN-GEN] Content preview: {str(explain_content)[:200]}...")
+                    
+                    # Ensure we don't return "No plan available" if we have actual content
+                    if explain_content and str(explain_content).strip() and str(explain_content).strip() not in ["No result", "Empty result set"]:
+                        final_plan = str(explain_content)
+                    else:
+                        self.logger.warning(f"[EXPLAIN-GEN] Empty or invalid content, using fallback")
+                        fallback_used = True
+                        plan_type = self._detect_query_type(query)
+                        final_plan = self._customize_fallback_plan(
+                            self.fallback_plans.get(plan_type, self.fallback_plans["default"]), 
+                            query, 
+                            False
+                        )
+                    
+                    self.logger.info(f"[EXPLAIN-GEN] Final plan being returned: {final_plan[:200]}...")
+                    self.logger.info(f"[EXPLAIN-GEN] Fallback used: {fallback_used}")
+                    
                     return EnhancedExplainResult(
-                        explain_plan=str(result.get("content", "No plan available")),
+                        explain_plan=final_plan,
                         success=True,
                         mcp_tools_used=["execute_query"],
                         timeout_occurred=False,
-                        fallback_used=False,
+                        fallback_used=fallback_used,
                         connection_attempts=connection_attempts,
-                        processing_time=processing_time
+                        processing_time=processing_time,
+                        warnings=["Using fallback plan due to empty MCP response"] if fallback_used else []
                     )
             else:
                 fallback_used = True
-                self.logger.info("[EXPLAIN] No MCP client available, using fallback")
+                self.logger.info("[EXPLAIN-GEN] No MCP client available, using fallback")
             
             # Fallback plan generation
+            self.logger.info("[EXPLAIN-GEN] Using fallback plan generation")
             plan_type = self._detect_query_type(query)
             fallback_plan = self.fallback_plans.get(plan_type, self.fallback_plans["default"])
             
@@ -454,14 +686,19 @@ class EnhancedExplainGenerator:
                 success=True,  # Fallback is considered successful
                 warnings=["Using fallback EXPLAIN plan due to MCP unavailability"],
                 timeout_occurred=timeout_occurred,
-                fallback_used=fallback_used,
+                fallback_used=True,
                 connection_attempts=connection_attempts,
-                processing_time=processing_time
+                processing_time=processing_time,
+                query_cost=None,  # No real cost available in fallback
+                execution_time=None,  # No real execution time in fallback
+                error_message=None,  # No error since fallback worked
+                mcp_tools_used=[]  # No MCP tools used in fallback
             )
             
         except Exception as e:
             processing_time = (datetime.now() - start_time).total_seconds()
             error_msg = f"EXPLAIN generation failed: {str(e)}"
+            self.logger.error(f"[EXPLAIN-GEN] Exception: {error_msg}")
             
             return EnhancedExplainResult(
                 explain_plan=self.fallback_plans["default"],
@@ -521,6 +758,8 @@ class EnhancedExplainGenerator:
             self.client = None
         
         self.logger.info("[EXPLAIN-GEN] Enhanced cleanup completed")
+        
+
 
 
 # Factory function for backward compatibility

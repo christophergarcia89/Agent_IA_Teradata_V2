@@ -13,7 +13,7 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, root_dir)
 
 try:
-    from src.agents.explain_generator import ExplainGeneratorAgent
+    from src.agents.explain_generator import EnhancedExplainGenerator
     from config.settings import settings
 except ImportError as e:
     print(f"❌ Error de importación: {e}")
@@ -53,7 +53,7 @@ async def validate_mcp_with_working_config():
     
     # 2. Test de inicialización del agente
     print("\n🔧 2. INICIALIZANDO AGENTE MCP:")
-    agent = ExplainGeneratorAgent()
+    agent = EnhancedExplainGenerator()
     
     start_time = datetime.now()
     
@@ -77,7 +77,7 @@ async def validate_mcp_with_working_config():
         
         try:
             result = await asyncio.wait_for(
-                agent.generate_explain(test_query), 
+                agent.generate_explain_plan(test_query), 
                 timeout=45.0
             )
             
@@ -107,22 +107,34 @@ async def validate_mcp_with_working_config():
         # 4. Test de información del servidor MCP
         print(f"\n🌐 4. INFO DEL MCP SERVER:")
         try:
-            server_info = await asyncio.wait_for(
-                agent.get_mcp_server_info(), 
-                timeout=15.0
-            )
-            
-            print(f"   🔌 Estado: {'Conectado' if server_info.get('connected') else 'Desconectado'}")
-            print(f"   🚀 Transport: {server_info.get('transport', 'N/A')}")
-            
-            tools = server_info.get('available_tools', [])
-            print(f"   🔧 Tools disponibles: {len(tools)}")
-            
-            if tools:
-                print("   📋 Principales tools:")
-                for tool in tools[:3]:  # Mostrar solo las primeras 3
-                    tool_name = tool.get('name', 'Sin nombre')
-                    print(f"      - {tool_name}")
+            if agent.client and hasattr(agent.client, 'get_available_tools_enhanced'):
+                try:
+                    available_tools = await asyncio.wait_for(
+                        agent.client.get_available_tools_enhanced(), 
+                        timeout=15.0
+                    )
+                    
+                    print(f"   🔌 Estado: Conectado")
+                    print(f"   🚀 Transport: {'HTTP' if hasattr(agent.client, 'http_client') and agent.client.http_client else 'STDIO' if hasattr(agent.client, 'session') and agent.client.session else 'N/A'}")
+                    
+                    if isinstance(available_tools, list):
+                        print(f"   🔧 Tools disponibles: {len(available_tools)}")
+                        
+                        if available_tools:
+                            print("   📋 Principales tools:")
+                            for tool in available_tools[:3]:  # Mostrar solo las primeras 3
+                                if isinstance(tool, dict):
+                                    tool_name = tool.get('name', 'Sin nombre')
+                                    tool_desc = tool.get('description', 'Sin descripción')[:50]
+                                    print(f"      - {tool_name}: {tool_desc}...")
+                    else:
+                        print(f"   🔧 Respuesta de tools: {type(available_tools)}")
+                        
+                except Exception as tool_err:
+                    print(f"   ⚠️ Error obteniendo tools: {tool_err}")
+                    print(f"   🔌 Estado: Parcialmente conectado")
+            else:
+                print("   ❌ Cliente MCP no inicializado o método no disponible")
                     
         except asyncio.TimeoutError:
             print("   ⏰ Timeout obteniendo info del servidor")
@@ -176,7 +188,7 @@ async def test_fallback_mode():
     print("\n🔄 TEST DE MODO FALLBACK")
     print("-" * 35)
     
-    agent = ExplainGeneratorAgent()
+    agent = EnhancedExplainGenerator()
     # No inicializar para forzar modo fallback
     
     try:
@@ -184,7 +196,7 @@ async def test_fallback_mode():
         print(f"📝 Query fallback: {test_query}")
         
         result = await asyncio.wait_for(
-            agent.generate_explain(test_query),
+            agent.generate_explain_plan(test_query),
             timeout=30.0
         )
         

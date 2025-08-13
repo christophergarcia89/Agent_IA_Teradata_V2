@@ -426,6 +426,7 @@ class RAGSystemTester:
             # Test inicialización del agente
             logger.info("Inicializando SQLReviewerAgent...")
             agent = SQLReviewerAgent(use_full_rag=True)
+            await agent.initialize()  # Esperamos a que el agente se inicialice completamente
             test_results["agent_initialized"] = True
             logger.info("Agente inicializado correctamente")
             

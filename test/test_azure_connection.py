@@ -7,7 +7,7 @@ import os
 import sys
 
 # Añadir el directorio raíz al path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils.azure_openai_utils import azure_openai_manager
 

@@ -46,7 +46,7 @@ class Settings(BaseSettings):
         env="DATABASE_URI"
     )
     teradata_mcp_server_url: str = Field(
-        default="http://localhost:3000", 
+        default="http://localhost:3002", 
         env="TERADATA_MCP_SERVER_URL"
     )
     mcp_server_token: Optional[str] = Field(default=None, env="MCP_SERVER_TOKEN")
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
         env="CHROMA_PERSIST_DIRECTORY"
     )
     embedding_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
+        default="jinaai/jina-embeddings-v2-base-code",
         env="EMBEDDING_MODEL"
     )
     

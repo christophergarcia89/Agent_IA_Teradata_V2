@@ -24,6 +24,7 @@ class SQLReviewResult(BaseModel):
     recommendations: List[str] = Field(description="Additional recommendations")
     confidence_score: float = Field(description="Confidence in the review (0-1)")
     used_examples: List[str] = Field(description="Examples used for reference")
+    rag_mode: str = Field(description="RAG mode used: 'full' or 'partial'")
 
 
 @dataclass
@@ -38,9 +39,10 @@ class ReviewContext:
 class SQLReviewerAgent:
     """Agent that reviews SQL queries for standards compliance using RAG."""
     
-    def __init__(self, vector_store: Optional[VectorStore] = None):
+    def __init__(self, vector_store: Optional[VectorStore] = None, use_full_rag: bool = False):
         self.logger = logging.getLogger(__name__)
         self.llm = azure_openai_manager.get_llm()
+        self.use_full_rag = use_full_rag
         
         # Use provided vector store or create a new one
         if vector_store:
@@ -202,7 +204,7 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             if doc_count == 0:
                 raise RuntimeError(f"Vector store is empty ({doc_count} documents) - cannot perform standards review without knowledge base")
             
-            self.logger.info(f"✅ Vector store ready with {doc_count} documents")
+            self.logger.info(f"[SUCCESS] Vector store ready with {doc_count} documents")
             
             # Gather context from RAG - this is now guaranteed to work
             context = await self._gather_review_context_robust(sql_query)
@@ -226,8 +228,15 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             # Parse the result
             result = self.output_parser.parse(response.content)
             
-            self.logger.info(f"SQL review completed. Compliant: {result.is_compliant}")
-            return result
+            # Add RAG mode to result 
+            result_dict = result.model_dump()
+            result_dict['rag_mode'] = 'full' if self.use_full_rag else 'partial'
+            
+            # Create new result with RAG mode included
+            final_result = SQLReviewResult(**result_dict)
+            
+            self.logger.info(f"SQL review completed. Compliant: {final_result.is_compliant}")
+            return final_result
             
         except Exception as e:
             self.logger.error(f"Error reviewing SQL query: {e}")
@@ -238,7 +247,8 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
                 corrected_query=sql_query,
                 recommendations=["Manual review required due to processing error"],
                 confidence_score=0.0,
-                used_examples=[]
+                used_examples=[],
+                rag_mode="none"  # Error case, no RAG was used
             )
     
     async def _ensure_vector_store_ready(self):
@@ -286,11 +296,11 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             
             # Log context quality
             total_context_items = len(similar_examples) + len(documentation) + len(ok_examples)
-            self.logger.info(f"✅ Context gathered: {total_context_items} items (similar: {len(similar_examples)}, docs: {len(documentation)}, OK: {len(ok_examples)})")
+            self.logger.info(f"[SUCCESS] Context gathered: {total_context_items} items (similar: {len(similar_examples)}, docs: {len(documentation)}, OK: {len(ok_examples)})")
             
             # Validate we have enough context for quality review
             if total_context_items < 3:
-                self.logger.warning(f"⚠️ Limited context available ({total_context_items} items) - review quality may be reduced")
+                self.logger.warning(f"[WARNING] Limited context available ({total_context_items} items) - review quality may be reduced")
             
             return context
             

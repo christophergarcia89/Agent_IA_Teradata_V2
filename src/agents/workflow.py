@@ -93,7 +93,7 @@ class TeradataWorkflow:
             self.logger.info("[OK] Step 3: Validating system readiness...")
             await self._validate_system_readiness()
             
-            self.logger.info("🎉 Teradata Workflow initialized successfully and ready for queries")
+            self.logger.info("[SUCCESS] Teradata Workflow initialized successfully and ready for queries")
             
         except Exception as e:
             self.logger.error(f"Failed to initialize workflow: {e}")
@@ -116,7 +116,7 @@ class TeradataWorkflow:
                 return
             
             # If no documents, trigger loading and wait
-            self.logger.info("📥 No documents found, triggering complete loading...")
+            self.logger.info("[LOADING] No documents found, triggering complete loading...")
             
             # Load knowledge base completely (not in background)
             import asyncio
@@ -130,7 +130,7 @@ class TeradataWorkflow:
             self.logger.info(f"[OK] ChromaDB fully loaded with {final_count} documents")
             
             if final_count == 0:
-                self.logger.warning("⚠️ Warning: ChromaDB initialized but no documents loaded")
+                self.logger.warning("[WARNING] Warning: ChromaDB initialized but no documents loaded")
             
         except asyncio.TimeoutError:
             self.logger.error("[ERROR] Timeout loading documents - system may have reduced functionality")
@@ -152,8 +152,38 @@ class TeradataWorkflow:
             test_examples = await self.vector_store.search_similar_examples("SELECT * FROM test", k=1)
             readiness_checks.append(("SQL examples search", len(test_examples) > 0, f"{len(test_examples)} found"))
             
-            # Check 3: Documentation search
-            test_docs = await self.vector_store.search_documentation("SQL standards", k=1)
+            # Check 3: Documentation search with fallback queries
+            max_retries = 3
+            retry_delay = 2.0
+            test_docs = []
+            
+            # Lista de queries para probar, en orden de especificidad
+            test_queries = [
+                "SQL standards",
+                "Teradata",
+                "UPDATE",
+                "SELECT",
+                "standards",
+                "normativa"
+            ]
+            
+            for query in test_queries:
+                for attempt in range(max_retries):
+                    try:
+                        self.logger.info(f"Trying documentation search with query: {query}")
+                        test_docs = await self.vector_store.search_documentation(query, k=1)
+                        if len(test_docs) > 0:
+                            self.logger.info(f"Found documentation with query: {query}")
+                            break
+                        await asyncio.sleep(retry_delay)
+                    except Exception as e:
+                        self.logger.warning(f"Search attempt failed with query '{query}': {e}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                
+                if len(test_docs) > 0:
+                    break
+                    
             readiness_checks.append(("Documentation search", len(test_docs) > 0, f"{len(test_docs)} found"))
             
             # Log readiness results
@@ -166,7 +196,7 @@ class TeradataWorkflow:
             if not all_ready:
                 raise RuntimeError("System readiness validation failed - some components not ready")
                 
-            self.logger.info("🎯 All system components validated and ready")
+            self.logger.info("[READY] All system components validated and ready")
             
         except Exception as e:
             self.logger.error(f"System readiness validation failed: {e}")
@@ -263,7 +293,7 @@ class TeradataWorkflow:
             
             state["messages"].append({
                 "type": "ai", 
-                "content": f"⚠️ SQL Review encountered an error but workflow will continue: {str(e)[:100]}..."
+                "content": f"[WARNING] SQL Review encountered an error but workflow will continue: {str(e)[:100]}..."
             })
             
             return state
@@ -306,10 +336,10 @@ class TeradataWorkflow:
                 
                 state["messages"].append({
                     "type": "ai",
-                    "content": f"⚠️ EXPLAIN plan generation failed: {error_info}. Workflow will continue with available data."
+                    "content": f"[WARNING] EXPLAIN plan generation failed: {error_info}. Workflow will continue with available data."
                 })
                 
-                self.logger.warning(f"⚠️ EXPLAIN generation failed: {error_info}")
+                self.logger.warning(f"[WARNING] EXPLAIN generation failed: {error_info}")
             
             return state
             
@@ -344,7 +374,7 @@ class TeradataWorkflow:
     async def _explain_interpretation_node(self, state: WorkflowState) -> WorkflowState:
         """Node for interpreting EXPLAIN plan and providing suggestions with robust error handling."""
         try:
-            self.logger.info("🎯 Executing EXPLAIN interpretation node")
+            self.logger.info("[EXECUTING] Executing EXPLAIN interpretation node")
             
             # Validate we have required data
             if not state["explain_result"]:
@@ -407,7 +437,7 @@ class TeradataWorkflow:
                 suggestions=[
                     OptimizationSuggestion(
                         issue="Analysis Error",
-                        suggestion=f"Manual analysis recommended: {str(e)}",
+                        description=f"Manual analysis recommended: {str(e)}",  # Changed from suggestion to description
                         priority="high",
                         impact="unknown",
                         implementation="Manual review required"
@@ -419,7 +449,7 @@ class TeradataWorkflow:
             
             state["messages"].append({
                 "type": "ai",
-                "content": f"⚠️ EXPLAIN interpretation failed: {str(e)[:100]}... Workflow will continue with basic recommendations."
+                "content": f"[WARNING] EXPLAIN interpretation failed: {str(e)[:100]}... Workflow will continue with basic recommendations."
             })
             
             return state
@@ -461,7 +491,7 @@ class TeradataWorkflow:
             if state["analysis_result"]:
                 for suggestion in state["analysis_result"].suggestions:
                     final_recommendations.append(
-                        f"[{suggestion.priority.upper()}] {suggestion.issue}: {suggestion.suggestion}"
+                        f"[{suggestion.priority.upper()}] {suggestion.issue}: {suggestion.description}"  # Changed from suggestion to description
                     )
             
             # Update state
@@ -492,14 +522,14 @@ class TeradataWorkflow:
         
         # Check if we have a review result (even if it has errors)
         if not state["review_result"]:
-            self.logger.warning("⚠️ No review result available, stopping workflow")
+            self.logger.warning("[WARNING] No review result available, stopping workflow")
             return "stop"
         
         # Continue regardless of violations - EXPLAIN can still provide valuable insights
         violations_count = len(state["review_result"].violations) if state["review_result"].violations else 0
         
         if violations_count > 0:
-            self.logger.info(f"📋 Found {violations_count} violations, but continuing with EXPLAIN generation for complete analysis")
+            self.logger.info(f"[INFO] Found {violations_count} violations, but continuing with EXPLAIN generation for complete analysis")
         else:
             self.logger.info("[OK] No violations found, proceeding with EXPLAIN generation")
         
@@ -510,7 +540,7 @@ class TeradataWorkflow:
                 self.logger.info("[EXPLAIN] Proceeding to EXPLAIN generation")
                 return "continue"
         
-        self.logger.warning("⚠️ No valid query available for EXPLAIN generation")
+        self.logger.warning("[WARNING] No valid query available for EXPLAIN generation")
         return "stop"
     
     def _should_continue_after_explain(self, state: WorkflowState) -> str:
@@ -597,9 +627,9 @@ class TeradataWorkflow:
         optimization_suggestions = []
         if state["analysis_result"]:
             for suggestion in state["analysis_result"].suggestions:
-                optimization_suggestions.append({
+                    optimization_suggestions.append({
                     "issue": suggestion.issue,
-                    "suggestion": suggestion.suggestion,
+                    "suggestion": suggestion.description,
                     "priority": suggestion.priority,
                     "impact": suggestion.impact,
                     "implementation": suggestion.implementation

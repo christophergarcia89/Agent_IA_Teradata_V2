@@ -20,6 +20,17 @@ class AzureOpenAIManager:
         self._openai_client = None
         self._initialized = False
         
+    def test_connection(self) -> bool:
+        """Test connection to Azure OpenAI."""
+        try:
+            client = self.get_langchain_client()
+            # Hacer una llamada simple para probar la conexión
+            response = client.invoke("Test connection to Azure OpenAI")
+            return True
+        except Exception as e:
+            logger.error(f"Error testing Azure OpenAI connection: {e}")
+            return False
+            
     def get_langchain_client(self) -> AzureChatOpenAI:
         """Get LangChain Azure OpenAI client."""
         if not self._langchain_client:

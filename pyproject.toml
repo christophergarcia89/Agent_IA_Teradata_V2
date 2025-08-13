@@ -41,7 +41,8 @@ dependencies = [
     "langgraph>=0.2.16",
     "langsmith>=0.1.104",
     "openai>=1.42.0",
-    "azure-openai>=1.0.0",
+    "azure-identity>=1.17.1",
+    "azure-core>=1.30.2",
     "chromadb>=0.5.5",
     "sentence-transformers>=3.0.1",
     "transformers>=4.44.2",
@@ -53,19 +54,11 @@ dependencies = [
     "pandas>=2.2.2",
     "numpy>=2.0.1",
     "sqlalchemy>=2.0.32",
+    "teradatasql>=17.20.0.28",
     "python-dotenv>=1.0.1",
     "pyyaml>=6.0.2",
     "rich>=13.7.1",
     "tiktoken>=0.7.0"
-]
-    "sentence-transformers>=2.2.2",
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "teradatasql>=17.20.0.0",
-    "python-dotenv>=1.0.0",
-    "pyyaml>=6.0.1",
-    "pandas>=2.1.0",
-    "httpx>=0.25.0",
 ]
 
 [project.optional-dependencies]

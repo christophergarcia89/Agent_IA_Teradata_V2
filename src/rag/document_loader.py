@@ -66,17 +66,17 @@ class DocumentLoader:
                 except Exception as e:
                     self.logger.error(f"Error loading SQL file {file_path}: {e}")
         
-        self.logger.info(f"✅ Total loaded: {len(examples)} SQL examples")
+        self.logger.info(f"[SUCCESS] Total loaded: {len(examples)} SQL examples")
         
         # Log statistics for debugging
         stats = self.get_example_statistics(examples)
-        self.logger.info(f"📊 Examples by type - OK: {stats['ok_examples']}, NOK: {stats['nok_examples']}")
-        self.logger.info(f"📁 Categories found: {list(stats['categories'].keys())}")
+        self.logger.info(f"[STATS] Examples by type - OK: {stats['ok_examples']}, NOK: {stats['nok_examples']}")
+        self.logger.info(f"[CATEGORIES] Categories found: {list(stats['categories'].keys())}")
         
         return examples
     
     def load_documentation(self) -> List[Document]:
-        """Load documentation files."""
+        """Load documentation files with enhanced metadata and chunking."""
         documents = []
         docs_path = self.knowledge_base_path / "documentation"
         
@@ -86,22 +86,49 @@ class DocumentLoader:
             
         for file_path in docs_path.glob("*.txt"):
             try:
+                self.logger.info(f"Loading documentation file: {file_path.name}")
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    
-                doc = Document(
-                    page_content=content,
-                    metadata={
-                        "source": str(file_path),
-                        "type": "documentation",
-                        "filename": file_path.name
-                    }
+                
+                # Metadata enriquecida
+                metadata = {
+                    "source": str(file_path),
+                    "filename": file_path.name,
+                    "type": "documentation",
+                    "doc_type": "documentation",
+                    "source_type": "documentation",
+                    "document_type": "documentation",
+                    "category": "documentation",
+                    "file_type": "txt",
+                    "path": str(file_path.parent)
+                }
+
+                # Dividir el contenido en chunks para mejor procesamiento
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    length_function=len,
+                    separators=["\n\n", "\n", ". ", ", ", " ", ""]
                 )
-                documents.append(doc)
+                
+                chunks = text_splitter.split_text(content)
+                for i, chunk in enumerate(chunks):
+                    chunk_metadata = metadata.copy()
+                    chunk_metadata.update({
+                        "chunk_index": i,
+                        "total_chunks": len(chunks)
+                    })
+                    
+                    documents.append(Document(
+                        page_content=chunk,
+                        metadata=chunk_metadata
+                    ))
+
             except Exception as e:
                 self.logger.error(f"Error loading documentation file {file_path}: {e}")
-                
-        self.logger.info(f"Loaded {len(documents)} documentation files")
+                continue
+
+        self.logger.info(f"Loaded {len(documents)} documentation chunks")
         return documents
     
     def _parse_consolidated_file(self, file_path: Path) -> List[SQLExample]:
@@ -290,12 +317,12 @@ class DocumentLoader:
         self.logger.info(f"Starting chunking of {len(documents)} documents...")
         chunked_docs = text_splitter.split_documents(documents)
         
-        self.logger.info(f"✅ Split {len(documents)} documents into {len(chunked_docs)} chunks")
+        self.logger.info(f"[SUCCESS] Split {len(documents)} documents into {len(chunked_docs)} chunks")
         
         # Log chunking statistics
         if chunked_docs:
             avg_chunk_size = sum(len(doc.page_content) for doc in chunked_docs) / len(chunked_docs)
-            self.logger.debug(f"📏 Average chunk size: {avg_chunk_size:.0f} characters")
+            self.logger.debug(f"[STATS] Average chunk size: {avg_chunk_size:.0f} characters")
         
         return chunked_docs
     

@@ -52,8 +52,7 @@ Agent_IA_Teradata/
 ├── src/
 │   ├── agents/
 │   │   ├── sql_reviewer.py              # Agente revisor con RAG
-│   │   ├── explain_generator.py         # Agente generador EXPLAIN (✅ Validado)
-│   │   ├── explain_generator_enhanced.py # Versión con circuit breaker
+│   │   ├── explain_generator.py         # Agente generador EXPLAIN
 │   │   ├── explain_interpreter.py       # Agente intérprete
 │   │   └── workflow.py                  # Orquestación LangGraph
 │   ├── rag/
@@ -122,45 +121,7 @@ pip install -r requirements.txt
 
 ### 3. Configurar variables de entorno
 
-Copia el contenido a `.env`:
-
-```properties
-# Azure OpenAI API Configuration (✅ Validado)
-AZURE_OPENAI_API_KEY=tu_clave_azure_openai
-AZURE_OPENAI_ENDPOINT=https://tu-endpoint.openai.azure.com
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_API_VERSION=2025-01-01-preview
-
-# Teradata Database Configuration (✅ Validado)
-TERADATA_HOST=EDW
-TERADATA_USER=Usr_Mkt_Common
-TERADATA_PASSWORD=DR2012td
-TERADATA_DATABASE=teraprod.bci.cl
-
-# Teradata MCP Server Configuration (✅ Validado)
-DATABASE_URI=teradata://Usr_Mkt_Common:DR2012td@10.33.84.36:1025/EDW?sslmode=disable&cop=off
-TERADATA_MCP_SERVER_URL=http://localhost:3002
-MCP_TRANSPORT_TYPE=http
-
-# Vector Database Configuration
-CHROMA_PERSIST_DIRECTORY=./data/chroma_db
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-
-# Application Configuration
-DEBUG=True
-LOG_LEVEL=INFO
-MAX_CONCURRENT_REQUESTS=10
-
-# RAG Configuration
-CHUNK_SIZE=1000
-CHUNK_OVERLAP=200
-TOP_K_RETRIEVAL=5
-SIMILARITY_THRESHOLD=0.7
-
-# LangGraph Configuration
-MAX_ITERATIONS=10
-TIMEOUT_SECONDS=300
-```
+### Solicitar configuración de las variables de entorno.
 
 ### 4. Verificar conectividad
 
@@ -289,7 +250,7 @@ TERADATA_PASSWORD=tu_password
 TERADATA_DATABASE=tu_database
 
 # MCP Server
-TERADATA_MCP_SERVER_URL=http://localhost:3000
+TERADATA_MCP_SERVER_URL=http://localhost:3002
 ```
 
 ### 5. Preparar base de conocimiento
@@ -414,7 +375,7 @@ python tests/benchmark.py
 Para usar el teradata-mcp-server:
 
 1. Instala y configura teradata-mcp-server
-2. Inicia el servidor en puerto 3000
+2. Inicia el servidor en puerto 3002
 3. Configura `TERADATA_MCP_SERVER_URL` en .env
 
 Ejemplo de configuración MCP:
@@ -422,7 +383,7 @@ Ejemplo de configuración MCP:
 ```json
 {
   "host": "localhost",
-  "port": 3000,
+  "port": 3002,
   "database": "DBC",
   "timeout": 30
 }
@@ -451,6 +412,27 @@ Ejemplo de configuración MCP:
 - Optimiza tamaño de chunks en RAG
 - Considera usar GPU para embeddings
 
+**Problemas con ChromaDB / Base de conocimiento corrupta**
+- Para reiniciar completamente la base de datos vectorial ChromaDB, elimina el directorio de datos:
+
+```bash
+# Windows (PowerShell)
+rm -r -fo data/chroma_db/
+
+# Windows (CMD)
+rmdir /s /q data\chroma_db
+
+# Linux/macOS
+rm -rf data/chroma_db/
+```
+
+- El sistema recreará automáticamente la base de datos con los documentos de `knowledge_base/` en el próximo inicio
+- Esto es útil cuando:
+  - Los embeddings están corruptos
+  - Se han actualizado los documentos de la base de conocimiento
+  - Se quiere cambiar el modelo de embeddings
+  - ChromaDB presenta errores de índice o consulta
+
 ## 🤝 Contribución
 
 1. Fork el proyecto
@@ -458,13 +440,6 @@ Ejemplo de configuración MCP:
 3. Commit cambios (`git commit -m 'Add AmazingFeature'`)
 4. Push a la rama (`git push origin feature/AmazingFeature`)
 5. Abre un Pull Request
-
-### Guías de contribución:
-
-- Sigue las convenciones de código existentes
-- Agrega tests para nuevas funcionalidades
-- Actualiza documentación cuando sea necesario
-- Usa mensajes de commit descriptivos
 
 ## 📄 Licencia
 
@@ -478,15 +453,4 @@ Este proyecto está licenciado bajo la Licencia MIT - ver [LICENSE](LICENSE) par
 - **ChromaDB** - Base de datos vectorial
 - **FastAPI** - Framework web
 
-## 📞 Soporte
-
-Para soporte y preguntas:
-
-- 📧 Email: equipo-desarrollo@empresa.com
-- 💬 Slack: #teradata-sql-agent
-- 📝 Issues: GitHub Issues
-- 📖 Wiki: Documentación interna
-
----
-
-**Desarrollado con ❤️ por el equipo de Data Engineering**
+**Desarrollado con ❤️ por el equipo de Datos CRM & Filiales**

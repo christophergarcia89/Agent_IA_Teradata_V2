@@ -9,7 +9,7 @@ import sys
 import socket
 
 # Añadir el directorio raíz al path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import settings
 
@@ -37,7 +37,7 @@ async def advanced_teradata_diagnostics():
     except Exception as e:
         print(f"   ❌ Error resolviendo {settings.teradata_host}: {e}")
         print(f"   💡 Probando con IP directa...")
-        teradata_ip = "161.131.180.193"  # IP conocida
+        teradata_ip = "10.33.84.36"  # IP conocida
     
     # 3. Test de conectividad en puertos específicos de Teradata
     print(f"\n🔌 3. Test de puertos Teradata:")

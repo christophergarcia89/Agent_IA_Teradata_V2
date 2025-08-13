@@ -22,13 +22,17 @@ from src.utils.azure_openai_utils import get_azure_openai_client
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_DB_IMPL"] = "duckdb+parquet"
 
+# Asegurar que el directorio de logs existe
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
+
 # Configurar logging optimizado
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('logs/test_rag_system_final.log', encoding='utf-8')
+        logging.FileHandler(log_dir / 'test_rag_system_final.log', encoding='utf-8')
     ]
 )
 

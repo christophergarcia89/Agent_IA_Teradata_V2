@@ -36,7 +36,7 @@ class OptimizationSuggestion(BaseModel):
 class ExplainAnalysis(BaseModel):
     """Complete analysis of an EXPLAIN plan."""
     overall_performance: str = Field(description="Overall performance assessment")
-    bottlenecks: List[str] = Field(description="Identified performance bottlenecks")
+    bottlenecks: List[OptimizationSuggestion] = Field(description="Identified performance bottlenecks")
     suggestions: List[OptimizationSuggestion] = Field(description="Optimization suggestions")
     query_complexity: str = Field(description="Complexity level of the query")
     estimated_improvement: str = Field(description="Estimated improvement potential")
@@ -115,53 +115,39 @@ Proporciona un análisis estructurado en formato JSON que incluya:
 Sé específico y práctico en tus recomendaciones."""
 
     def _get_human_prompt(self) -> str:
-        """Get the human prompt template."""
-        return """Analiza el siguiente plan EXPLAIN de Teradata:
+        """Get a simplified human prompt template that works reliably."""
+        return """Analiza este plan EXPLAIN de Teradata y responde con JSON válido:
 
-QUERY ORIGINAL:
-```sql
-{original_query}
-```
+QUERY: {original_query}
+PLAN: {explain_plan}
+MÉTRICAS: Table Scans: {table_scans}, Joins: {joins}, Redistributions: {redistributions}
 
-PLAN EXPLAIN:
-```
-{explain_plan}
-```
+Responde ÚNICAMENTE con JSON en este formato exacto:
 
-MÉTRICAS EXTRAÍDAS:
-- Table Scans: {table_scans}
-- Index Scans: {index_scans}
-- Joins: {joins}
-- Sorts: {sorts}
-- Redistributions: {redistributions}
-- Spool Operations: {spool_operations}
-- Product Joins: {product_joins}
-- Confidence Level: {confidence_level}
-- Estimated Cost: {estimated_cost}
-
-WARNINGS DEL SISTEMA:
-{warnings}
-
-Proporciona un análisis completo que incluya:
-
-1. **Evaluación General**: Califica el performance general (Excelente/Bueno/Regular/Malo/Crítico)
-
-2. **Cuellos de Botella**: Identifica los principales problemas de performance
-
-3. **Sugerencias de Optimización**: Para cada problema, proporciona:
-   - Descripción del issue
-   - Sugerencia específica de optimización
-   - Prioridad (CRITICAL/HIGH/MEDIUM/LOW)
-   - Impacto esperado
-   - Pasos de implementación
-
-4. **Complejidad**: Evalúa la complejidad del query (Simple/Moderada/Compleja/Muy Compleja)
-
-5. **Potencial de Mejora**: Estima el potencial de mejora (Bajo/Medio/Alto/Muy Alto)
-
-6. **Notas Específicas de Teradata**: Observaciones específicas de la plataforma
-
-Responde ÚNICAMENTE con JSON válido siguiendo el formato especificado."""
+{{
+  "overall_performance": "Excelente|Bueno|Regular|Malo|Crítico",
+  "bottlenecks": [
+    {{
+      "issue": "descripción del problema",
+      "description": "explicación detallada", 
+      "priority": "CRITICAL|HIGH|MEDIUM|LOW",
+      "impact": "impacto esperado",
+      "implementation": "pasos de implementación"
+    }}
+  ],
+  "suggestions": [
+    {{
+      "issue": "descripción del issue",
+      "description": "sugerencia específica",
+      "priority": "CRITICAL|HIGH|MEDIUM|LOW", 
+      "impact": "impacto esperado",
+      "implementation": "pasos de implementación"
+    }}
+  ],
+  "query_complexity": "Simple|Moderada|Compleja|Muy Compleja",
+  "estimated_improvement": "Bajo|Medio|Alto|Muy Alto",
+  "teradata_specific_notes": ["nota1", "nota2"]
+}}"""
 
     async def analyze_explain(self, explain_plan: str, original_query: str) -> ExplainAnalysis:
         """
@@ -178,33 +164,85 @@ Responde ÚNICAMENTE con JSON válido siguiendo el formato especificado."""
             # Extract metrics from explain plan
             metrics = self._extract_metrics(explain_plan)
             
-            # Format the prompt
+            # Format the prompt with simplified parameters
             formatted_prompt = self.analysis_prompt.format_messages(
                 original_query=original_query,
                 explain_plan=explain_plan,
                 table_scans=metrics.table_scans,
-                index_scans=metrics.index_scans,
                 joins=metrics.joins,
-                sorts=metrics.sorts,
-                redistributions=metrics.redistributions,
-                spool_operations=metrics.spool_operations,
-                product_joins=metrics.product_joins,
-                confidence_level=metrics.confidence_level,
-                estimated_cost=metrics.estimated_cost or "Unknown",
-                warnings="None"
+                redistributions=metrics.redistributions
             )
             
-            # Get LLM response
-            response = await self.llm.ainvoke(formatted_prompt)
+            # Get LLM response with enhanced error handling
+            try:
+                response = await self.llm.ainvoke(formatted_prompt)
+                
+                # Debug: Log the raw response in detail
+                self.logger.info(f"[DEBUG] LLM response type: {type(response)}")
+                self.logger.info(f"[DEBUG] LLM response dir: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+                
+                # Try to get content in different ways
+                content = None
+                if hasattr(response, 'content'):
+                    content = response.content
+                    self.logger.info(f"[DEBUG] response.content type: {type(content)}")
+                    self.logger.info(f"[DEBUG] response.content full: '{content}'")
+                    self.logger.info(f"[DEBUG] response.content length: {len(str(content))}")
+                elif hasattr(response, 'text'):
+                    content = response.text
+                    self.logger.info(f"[DEBUG] response.text: '{content}' (length: {len(str(content))})")
+                elif isinstance(response, str):
+                    content = response
+                    self.logger.info(f"[DEBUG] response as string: '{content}' (length: {len(content)})")
+                else:
+                    content = str(response)
+                    self.logger.info(f"[DEBUG] response converted to string: '{content}' (length: {len(content)})")
+                
+                # Additional debugging for AI message attributes
+                if hasattr(response, 'additional_kwargs'):
+                    self.logger.info(f"[DEBUG] additional_kwargs: {response.additional_kwargs}")
+                if hasattr(response, 'response_metadata'):
+                    self.logger.info(f"[DEBUG] response_metadata: {response.response_metadata}")
+                    
+            except Exception as llm_error:
+                self.logger.error(f"[DEBUG] LLM invocation failed: {llm_error}")
+                return self._create_fallback_analysis(explain_plan, metrics)
             
             # Parse JSON response
             import json
+            import re
             try:
-                analysis_dict = json.loads(response.content)
+                if not content or content.strip() == "":
+                    self.logger.warning("[DEBUG] Empty content received from LLM, using fallback")
+                    return self._create_fallback_analysis(explain_plan, metrics)
+                
+                # Extract JSON from markdown code blocks if present
+                clean_content = content.strip()
+                
+                # Remove markdown code blocks using regex
+                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_content, re.DOTALL)
+                if json_match:
+                    clean_content = json_match.group(1)
+                elif clean_content.startswith('```') and clean_content.endswith('```'):
+                    # Fallback: simple removal of code blocks
+                    lines = clean_content.split('\n')
+                    if lines[0].strip().startswith('```') and lines[-1].strip() == '```':
+                        clean_content = '\n'.join(lines[1:-1])
+                
+                clean_content = clean_content.strip()
+                self.logger.info(f"[DEBUG] Cleaned content for JSON parsing: {clean_content[:200]}...")
+                
+                if not clean_content:
+                    self.logger.warning("[DEBUG] Cleaned content is empty, using fallback")
+                    return self._create_fallback_analysis(explain_plan, metrics)
+                
+                analysis_dict = json.loads(clean_content)
                 # Convert to Pydantic model
                 analysis = ExplainAnalysis(**analysis_dict)
-            except (json.JSONDecodeError, KeyError) as e:
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
                 self.logger.warning(f"Failed to parse LLM response as JSON: {e}")
+                self.logger.warning(f"[DEBUG] Raw content that failed parsing: '{content}'")
+                self.logger.warning(f"[DEBUG] Cleaned content that failed parsing: '{clean_content if 'clean_content' in locals() else 'N/A'}'")
                 return self._create_fallback_analysis(explain_plan, metrics)
             
             self.logger.info(f"Analysis completed: {analysis.overall_performance}")
@@ -247,9 +285,20 @@ Responde ÚNICAMENTE con JSON válido siguiendo el formato especificado."""
         return ExplainAnalysis(
             overall_performance="Crítico - Error de Conectividad",
             bottlenecks=[
-                "No se pudo conectar a Teradata",
-                "Error de red o firewall",
-                "Servidor de base de datos inaccesible"
+                OptimizationSuggestion(
+                    issue="No se pudo conectar a Teradata",
+                    description="Error de red o firewall impide la conexión",
+                    priority="CRITICAL",
+                    impact="Imposible generar plan EXPLAIN",
+                    implementation="Verificar conectividad de red"
+                ),
+                OptimizationSuggestion(
+                    issue="Servidor de base de datos inaccesible",
+                    description="Timeout en conexión a Teradata",
+                    priority="CRITICAL",
+                    impact="Sistema no operativo",
+                    implementation="Contactar administrador de infraestructura"
+                )
             ],
             suggestions=[
                 OptimizationSuggestion(
@@ -324,7 +373,15 @@ Responde ÚNICAMENTE con JSON válido siguiendo el formato especificado."""
         
         return ExplainAnalysis(
             overall_performance=performance,
-            bottlenecks=issues if issues else ["Sin problemas críticos detectados"],
+            bottlenecks=suggestions if suggestions else [
+                OptimizationSuggestion(
+                    issue="Sin problemas críticos detectados",
+                    description="No se detectaron cuellos de botella significativos",
+                    priority="LOW",
+                    impact="Mantener configuración actual",
+                    implementation="Monitorear performance en ejecución real"
+                )
+            ],
             suggestions=suggestions if suggestions else [
                 OptimizationSuggestion(
                     issue="Query appears optimized",
@@ -386,7 +443,15 @@ Responde ÚNICAMENTE con JSON válido siguiendo el formato especificado."""
         """Create an error analysis when explain plan analysis fails."""
         return ExplainAnalysis(
             overall_performance="Error",
-            bottlenecks=[f"Analysis failed: {error_message}"],
+            bottlenecks=[
+                OptimizationSuggestion(
+                    issue=f"Analysis failed: {error_message}",
+                    description="Error occurred during EXPLAIN plan analysis",
+                    priority="CRITICAL",
+                    impact="Cannot provide optimization without valid analysis",
+                    implementation="Fix the underlying issue preventing analysis"
+                )
+            ],
             suggestions=[
                 OptimizationSuggestion(
                     issue="EXPLAIN plan analysis failed",
