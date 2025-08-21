@@ -80,11 +80,9 @@ Agent_IA_Teradata/
 │   │   ├── teradata_utils.py            # Utilidades Teradata
 │   │   ├── enhanced_azure_openai_utils.py # Utils Azure OpenAI
 │   │   └── logging_utils.py             # Sistema de logging
-│   └── web_interface_enhanced.py        # Interfaz con timeout protection
+├── web_interface_validation.py          # Interfaz web
 ├── knowledge_base/
 │   ├── documentation/                   # Documentación de estándares
-│   │   ├── estandares_sql_teradata.txt
-│   │   ├── mejores_practicas_performance.txt
 │   │   └── Normativa.txt
 │   └── examples/                        # Ejemplos consolidados OK/NOK
 │       ├── consolidado_CREATE_UPDATE.txt
@@ -94,23 +92,21 @@ Agent_IA_Teradata/
 │   └── chroma_db/                       # Base de datos vectorial ChromaDB
 ├── config/
 │   ├── settings.py                      # Configuración centralizada
-│   └── model_strategy.py               # Estrategia de modelos
 ├── test/
-│   ├── test_mcp_validation.py           # ✅ Test validación MCP
+│   ├── test_mcp_validation.py           # Test validación MCP
 │   ├── test_azure_connection.py         # Test Azure OpenAI
-│   ├── validate_chromadb.py             # 🆕 Validador independiente ChromaDB
+│   ├── validate_chromadb.py             # Validador independiente ChromaDB
 │   ├── test_rag_system_fixed.py         # Test sistema RAG mejorado
 ├── logs/                                # Directorio de logs
 │   ├── teradata_agent.log
 │   ├── sql_queries.log
 │   ├── performance.log
 │   └── errors.log
-├── mcp_server.py                        # ✅ MCP Server
+├── mcp_server.py                        # MCP Server
 ├── main.py                              # Punto de entrada principal
-├── web_interface_validation.py          # 🆕 Interfaz web con validación detallada
-├── requirements.txt                     # Dependencias Python (MCP incluidas)
-├── .env                                 # ✅ Configuración validada
-└── README.md                            # Esta documentación
+├── requirements.txt                     # Dependencias Python
+├── .env                                 # Configuración de entorno
+└── README.md                            # Documentación
 ```
 
 ## 🛠️ Instalación y Configuración
@@ -179,16 +175,7 @@ Deberías ver:
 INFO:     Uvicorn running on http://0.0.0.0:3002
 ```
 
-### 2. Interfaz Web (Recomendado)
-
-```bash
-# Terminal 2: Iniciar interfaz web
-python web_interface_enhanced.py
-```
-
-Abre tu navegador en: `http://localhost:8006`
-
-### 4. Interfaz Web Enhanced con Validación Detallada (Nuevo)
+### 2. Interfaz Web con Validación Detallada
 
 ```bash
 # Terminal: Interfaz web con validación de agentes individuales
@@ -203,7 +190,7 @@ Abre tu navegador en: `http://localhost:8006`
 - Visualización de errores y timeouts específicos
 - Validación en tiempo real de conectividad MCP y ChromaDB
 
-### 5. Validadores Independientes
+### 3. Validadores Independientes
 
 ```bash
 # Validador completo de ChromaDB con auto-carga
@@ -218,7 +205,7 @@ python test\test_rag_system_fixed.py
 ### Tests de Conectividad Validados
 
 ```bash
-# ✅ Test validación MCP completa (VALIDADO)
+# ✅ Test validación MCP completa
 python test\test_mcp_validation.py
 
 # Resultado esperado:
@@ -263,16 +250,6 @@ python web_interface_validation.py
 ❌ Hostname Bloqueado: EDW (DNS/Firewall)
 ✅ IP Funcional: 10.33.84.36 (Conectividad confirmada)
 ```
-
-### MCP Server Optimizado
-
-- **✅ Parser URI corregido**: Maneja correctamente `teradata://` (11 caracteres)
-- **✅ Host sin puerto**: Usa solo IP para conexión
-- **✅ Timeout apropiado**: 10 segundos (10000ms)
-- **✅ Manejo de EXPLAIN**: Procesa correctamente respuestas `{"Explanation": "text"}`
-- **✅ Circuit breaker**: Protección automática contra timeouts
-- **✅ Enhanced logging**: Tracking detallado de operaciones y errores
-
 ### Sistema RAG Mejorado
 
 - **✅ Warm-up automático**: Modelo de embeddings pre-inicializado
@@ -280,8 +257,6 @@ python web_interface_validation.py
 - **✅ Búsqueda consistente**: Resultados consistentes en múltiples ejecuciones
 - **✅ Validador independiente**: Diagnóstico completo con `validate_chromadb.py`
 - **✅ Timeout protection**: Búsquedas RAG con protección de timeout
-
-## 📊 Ejemplos de Uso Validados
 
 ## 📊 Ejemplos de Uso Validados
 
@@ -346,7 +321,7 @@ Agrega tus archivos de documentación y ejemplos:
 
 ## 🏃‍♂️ Uso
 
-### Interfaz Web (Recomendado)
+### Interfaz Web
 
 ```bash
 python src/web_interface.py
@@ -496,12 +471,12 @@ rm -rf data/chroma_db/
   - Se quiere cambiar el modelo de embeddings
   - ChromaDB presenta errores de índice o consulta
 
-**Problemas de búsqueda inconsistente (Resuelto)**
+**Problemas de búsqueda inconsistente**
 - ✅ **Solución implementada**: Warm-up automático del modelo de embeddings
 - ✅ **Auto-carga**: Los documentos se cargan automáticamente si la base está vacía
 - ✅ **Validador independiente**: Usa `validate_chromadb.py` para diagnóstico completo
 
-**Timeouts en agentes MCP (Mejorado)**
+**Timeouts en agentes MCP**
 - ✅ **Circuit breaker pattern** implementado para conexiones MCP
 - ✅ **Timeout protection** con fallback automático
 - ✅ **Enhanced logging** para tracking detallado de timeouts
@@ -579,13 +554,6 @@ urllib3>=1.26.0                 # Conexiones robustas
 
 ### 🚀 Implementación en Producción
 
-**Archivos Clave de la Solución:**
-- `src/rag/vector_store.py` - **Versión productiva corporativa**
-- `test/validate_chromadb.py` - **Validador independiente con auto-carga**
-- `web_interface_validation.py` - **Interfaz web con validación detallada**
-- `src/agents/explain_generator.py` - **Enhanced MCP con timeout protection**
-- `src/agents/sql_reviewer.py` - **Revisor con timeout safety**
-
 **Beneficios Logrados:**
 1. 🚫 **SIN BLOQUEOS**: Elimina completamente los hang-ups de ChromaDB
 2. 🏢 **CORPORATIVO-SAFE**: Funciona en entornos restrictivos
@@ -599,52 +567,3 @@ urllib3>=1.26.0                 # Conexiones robustas
 10. ⚡ **BÚSQUEDA CONSISTENTE**: Warm-up automático de embeddings
 11. 🎯 **TIMEOUT PROTECTION**: Circuit breakers para todas las operaciones
 12. 🌐 **VALIDACIÓN DETALLADA**: Interfaz web enhanced para debugging
-
-## 🆕 Mejoras Recientes Implementadas
-
-### 🔧 Sistema de Validación Independiente
-- **✅ Nuevo validador ChromaDB**: `test/validate_chromadb.py`
-  - Auto-carga de documentos cuando la base está vacía
-  - Validación completa de todas las operaciones
-  - Diagnóstico detallado de performance
-  - Forzado de carga si no hay documentos
-
-### 🌐 Interfaz Web Enhanced
-- **✅ Nueva interfaz detallada**: `web_interface_validation.py`
-  - Salidas individuales de cada agente por separado
-  - Tracking de tiempo de procesamiento individual
-  - Visualización de errores y timeouts específicos
-  - Validación en tiempo real de conectividad
-
-### ⚡ Sistema RAG Optimizado
-- **✅ Warm-up automático**: Inicialización del modelo de embeddings
-  - Elimina el problema de "primera búsqueda sin resultados"
-  - Resultados consistentes en todas las ejecuciones
-  - Warm-up con múltiples queries de ejemplo
-- **✅ Auto-carga inteligente**: Documentos se cargan automáticamente
-- **✅ Timeout protection**: Búsquedas RAG con protección de timeout
-
-### 🔐 MCP Enhanced con Circuit Breaker
-- **✅ Timeout protection**: Protección completa contra timeouts
-- **✅ Circuit breaker pattern**: Prevención automática de bloqueos
-- **✅ Enhanced logging**: Tracking detallado de todas las operaciones
-- **✅ Fallback modes**: Múltiples estrategias de recuperación
-
-### 📦 Gestión de Dependencias MCP
-- **✅ Consolidación completa**: Todas las dependencias MCP en `requirements.txt`
-- **✅ Instalación simplificada**: Un solo comando para todas las dependencias
-- **✅ Validador de requisitos**: Script de verificación automática
-
-### 🎯 Mejoras de Performance
-- **✅ Batch processing optimizado**: Tamaño de lote ajustado para mejor throughput
-- **✅ Carga progresiva**: Inicialización por fases priorizadas
-- **✅ Cache de embeddings**: Gestión inteligente de memoria
-- **✅ SSL bypass**: Configuración optimizada para entornos corporativos
-
-### 📊 Logging y Monitoreo
-- **✅ Métricas detalladas**: Tracking completo de performance
-- **✅ Error tracking**: Clasificación y seguimiento de errores
-- **✅ Timeout analytics**: Análisis detallado de timeouts
-- **✅ Health checks**: Validación continua de componentes
-
-**Desarrollado con ❤️ por el equipo de Datos CRM & Filiales**
