@@ -68,9 +68,7 @@ class CorporateVectorStore:
         
         # Progressive loading configuration
         self.batch_size = 128
-        self.chunk_size = 500
-        self.chunk_overlap = 100
-        self.loading_chunk_size = 20  # Chunk size for background loading
+        self.loading_chunk_size = 20  
     
     def clear_embedding_cache(self):
         """Clear embedding cache and force reload - from original best practices."""
@@ -431,8 +429,8 @@ class CorporateVectorStore:
             # Chunk documents with smaller chunks for faster processing
             chunked_docs = loader.chunk_documents(
                 documents,
-                chunk_size=self.chunk_size,  # Configurable chunk size
-                chunk_overlap=self.chunk_overlap  # Configurable overlap
+                chunk_size=settings.chunk_size,  # Use centralized configuration
+                chunk_overlap=settings.chunk_overlap  # Use centralized configuration
             )
             
             self.logger.info(f"[ADD] ADDING Adding {len(chunked_docs)} {doc_type} chunks (batch_size: {batch_size})")
@@ -670,7 +668,9 @@ class CorporateVectorStore:
             "has_embeddings": self.embeddings is not None,
             "metadata_count": len(self.metadata),
             "batch_size": self.batch_size,
-            "chunk_size": self.chunk_size
+            "chunk_size": settings.chunk_size,  # Use centralized configuration
+            "chunk_overlap": settings.chunk_overlap,  # Use centralized configuration
+            "loading_chunk_size": self.loading_chunk_size
         }
     
     def reset_vector_store(self):
