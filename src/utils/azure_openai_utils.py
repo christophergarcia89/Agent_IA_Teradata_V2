@@ -1,5 +1,5 @@
 """
-Azure OpenAI utilities for the Teradata SQL Agent.
+Azure OpenAI utils
 """
 
 import os

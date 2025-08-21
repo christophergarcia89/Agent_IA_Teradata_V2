@@ -1,5 +1,5 @@
 """
-Explain Interpreter Agent that analyzes EXPLAIN plans and provides optimization suggestions.
+Agente Intérprete de EXPLAIN que analiza planes EXPLAIN y proporciona sugerencias de optimización.
 """
 
 import logging
@@ -59,8 +59,7 @@ class ExplainMetrics:
 
 
 class ExplainInterpreterAgent:
-    """Agent that interprets EXPLAIN plans and provides optimization suggestions."""
-    
+        
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.llm = azure_openai_manager.get_llm()
@@ -72,7 +71,7 @@ class ExplainInterpreterAgent:
         ])
         
     def _get_system_prompt(self) -> str:
-        """Get the system prompt for EXPLAIN analysis."""
+        
         return """Eres un experto en optimización de queries SQL para Teradata con más de 15 años de experiencia en análisis de planes de ejecución y tuning de performance.
 
 EXPERTISE:

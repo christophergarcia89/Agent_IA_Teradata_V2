@@ -19,6 +19,13 @@ langchain-text-splitters>=0.2.2
 langgraph>=0.2.16
 langsmith>=0.1.104
 
+# MODEL CONTEXT PROTOCOL (MCP) INTEGRATION
+# -----------------------------------------
+langchain-mcp-adapters>=0.1.0
+mcp>=1.0.0
+teradata-mcp-server>=0.1.0
+uv>=0.4.0
+
 # AZURE OPENAI INTEGRATION
 # -------------------------
 openai>=1.42.0
@@ -119,21 +126,3 @@ certifi>=2024.7.4
 typing-extensions>=4.12.2
 types-requests>=2.32.0.20240712
 types-PyYAML>=6.0.12.20240724
-
-# =============================================================================
-# INSTALLATION NOTES:
-# 
-# Basic installation:
-#   pip install -r requirements.txt
-#
-# Development installation:
-#   pip install -r requirements.txt
-#   pip install -e .
-#
-# GPU support (if available):
-#   pip uninstall torch
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121
-#
-# Minimal installation (core only):
-#   pip install langchain>=0.2.16 openai>=1.42.0 fastapi>=0.112.1 chromadb>=0.5.5
-# =============================================================================

@@ -1,5 +1,5 @@
 """
-SQL Query Reviewer Agent using RAG for standards compliance.
+Agente Revisor de Consultas SQL usando RAG para cumplimiento de estándares.
 """
 
 import logging
@@ -67,7 +67,7 @@ class SQLReviewerAgent:
                 try:
                     await asyncio.wait_for(
                         self.vector_store.initialize(),
-                        timeout=30.0  # 30 seconds timeout
+                        timeout=30.0
                     )
                     self.logger.info("SQL Reviewer Agent initialized with vector store")
                 except asyncio.TimeoutError:
@@ -183,7 +183,7 @@ EJEMPLOS DE BUENAS PRÁCTICAS (OK):
 1. Al recibir código SQL, identifica el tipo de sentencia (SELECT, CREATE, etc.)
 2. Busca en el sistema interno ejemplos similares marcados como "OK" como referencia para corregir y "NOK" para seguir a la corrección del código
 3. Identifica las violaciones de estándares presentes en el código
-4. Proporciona la versión corregida, siguiendo los ejemplos "OK" como referencia
+4. Proporciona la versión corregida, siguiendo los ejemplos "OK" como referencia. De igual manera incluye la corrección con los esquemas prohibidos, pero indicando que deben ser evitados.
 5. Explica brevemente las correcciones realizadas
 
 Si la consulta no está relacionada con estándares de código SQL, indicar que sólo puedes ayudar con estandarización de código SQL.
@@ -196,7 +196,7 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             self.logger.info("Starting SQL query review")
             
             # STRICT REQUIREMENT: Vector store must be ready and loaded
-            if not self.vector_store or not self.vector_store.vectorstore:
+            if not self.vector_store or not hasattr(self.vector_store, '_corporate_store') or not self.vector_store._corporate_store:
                 raise RuntimeError("Vector store not initialized - RAG system required for SQL review")
             
             # Verify vector store has documents
@@ -285,7 +285,9 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             documentation = await self.vector_store.search_documentation(f"{query_type} standards", k=3)
             
             # Get OK examples - REQUIRED
-            ok_examples = await self.vector_store.search_ok_examples_by_category(query_type, k=5)
+            ok_examples = await self.vector_store.search_ok_examples_by_category(
+                f"{query_type} SQL examples", category=query_type, k=5
+            )
             
             context = ReviewContext(
                 original_query=sql_query,
@@ -362,7 +364,9 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             # Try to get OK examples with short timeout
             try:
                 ok_examples = await asyncio.wait_for(
-                    self.vector_store.search_ok_examples_by_category(query_type, k=3),
+                    self.vector_store.search_ok_examples_by_category(
+                        f"{query_type} SQL examples", category=query_type, k=3
+                    ),
                     timeout=5.0  # 5 seconds max
                 )
                 context.ok_examples = ok_examples
@@ -414,7 +418,7 @@ Si no encuentras ejemplos relevantes en la base de conocimiento, responde que no
             
             # Get OK examples for the detected category
             ok_examples = await self.vector_store.search_ok_examples_by_category(
-                query_type, k=5
+                f"{query_type} SQL examples", category=query_type, k=5
             )
             
         except Exception as e:

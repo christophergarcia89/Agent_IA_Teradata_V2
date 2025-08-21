@@ -1,5 +1,5 @@
 """
-Configuration module for the Teradata SQL Agent project.
+Módulo de configuración para el proyecto Teradata SQL Agent.
 """
 
 import os
@@ -14,9 +14,9 @@ ENV_FILE_PATH = PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Configuración de la aplicación cargada desde variables de entorno."""
     
-    # Azure OpenAI Configuration
+    # Configuración Azure OpenAI
     azure_openai_api_key: str = Field(default="", env="AZURE_OPENAI_API_KEY")
     azure_openai_endpoint: str = Field(
         default="https://bci-sub-genai-poc-comunidades-oai.openai.azure.com", 
@@ -31,16 +31,16 @@ class Settings(BaseSettings):
         env="AZURE_OPENAI_API_VERSION"
     )
     
-    # OpenAI Configuration (legacy - mantenido por compatibilidad)
+    # Configuración OpenAI
     openai_api_key: str = Field(default="", env="OPENAI_API_KEY")
     
-    # Teradata Database Configuration
+    # Configuración Base de Datos Teradata
     teradata_host: str = Field(default="localhost", env="TERADATA_HOST")
     teradata_user: str = Field(default="dbc", env="TERADATA_USER")
     teradata_password: str = Field(default="dbc", env="TERADATA_PASSWORD")
     teradata_database: str = Field(default="DBC", env="TERADATA_DATABASE")
     
-    # Teradata MCP Server Configuration (siguiendo estándares oficiales)
+    # Configuración Servidor MCP Teradata (siguiendo estándares oficiales)
     database_uri: str = Field(
         default="", 
         env="DATABASE_URI"
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
         env="MCP_TRANSPORT_TYPE"  # "stdio", "http", o "sse"
     )
     
-    # Vector Database Configuration
+    # Configuración Base de Datos Vectorial
     chroma_persist_directory: str = Field(
         default="./data/chroma_db",
         env="CHROMA_PERSIST_DIRECTORY"
@@ -67,18 +67,18 @@ class Settings(BaseSettings):
         env="EMBEDDING_MODEL"
     )
     
-    # Application Configuration
+    # Configuración de la Aplicación
     debug: bool = Field(default=True, env="DEBUG")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     max_concurrent_requests: int = Field(default=10, env="MAX_CONCURRENT_REQUESTS")
     
-    # RAG Configuration
+    # Configuración RAG
     chunk_size: int = Field(default=1000, env="CHUNK_SIZE")
     chunk_overlap: int = Field(default=200, env="CHUNK_OVERLAP")
     top_k_retrieval: int = Field(default=5, env="TOP_K_RETRIEVAL")
     similarity_threshold: float = Field(default=0.7, env="SIMILARITY_THRESHOLD")
     
-    # LangGraph Configuration
+    # Configuración LangGraph
     max_iterations: int = Field(default=10, env="MAX_ITERATIONS")
     timeout_seconds: int = Field(default=300, env="TIMEOUT_SECONDS")
     
@@ -87,10 +87,10 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 
-# Global settings instance
+# Instancia global de configuración
 settings = Settings()
 
 
 def get_settings() -> Settings:
-    """Get the global settings instance."""
+    """Obtener la instancia global de configuración."""
     return settings

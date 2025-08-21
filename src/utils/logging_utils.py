@@ -1,5 +1,5 @@
 """
-Logging utilities for the Teradata SQL Agent project.
+Logging utilities
 """
 
 import logging

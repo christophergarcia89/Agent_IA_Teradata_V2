@@ -1,5 +1,5 @@
 """
-Enhanced Explain Generator with comprehensive MCP timeout protection.
+Generador de EXPLAIN integral de timeout MCP.
 """
 
 import logging
@@ -8,8 +8,6 @@ import os
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-
-# Importaciones necesarias
 import httpx
 
 # Importaciones MCP (opcionales)
@@ -275,16 +273,23 @@ class EnhancedTeradataMCPClient:
                     return response.json().get("tools", [])
             return []
         
-        result, error, timeout_occurred = await self.safe_operation(
+        result_dict = await self.safe_operation(
             get_tools_operation,
             "GetAvailableTools",
             10.0  # Shorter timeout for tool listing
         )
         
-        if result:
+        if result_dict.get('success', True) and 'content' in result_dict:
+            result = result_dict['content'] if isinstance(result_dict['content'], list) else []
+            self.logger.info(f"[MCP-TOOLS] Found {len(result)} available tools")
+            return result
+        elif 'error' not in result_dict and result_dict:
+            # Direct result (not wrapped in dict)
+            result = result_dict if isinstance(result_dict, list) else []
             self.logger.info(f"[MCP-TOOLS] Found {len(result)} available tools")
             return result
         else:
+            error = result_dict.get('error', 'Unknown error')
             self.logger.warning(f"[MCP-TOOLS] Failed to get tools: {error}")
             return []
     
@@ -423,7 +428,6 @@ class EnhancedExplainGenerator:
         self.client: Optional[EnhancedTeradataMCPClient] = None
         self.fallback_plans = self._load_fallback_plans()
         
-        # Enhanced configuration
         self.config = EnhancedTeradataConnectionConfig(
             database_uri=getattr(settings, 'database_uri', 'teradata://localhost:1025/test'),
             transport_type=getattr(settings, 'MCP_TRANSPORT', 'http'),
@@ -683,16 +687,16 @@ class EnhancedExplainGenerator:
             
             return EnhancedExplainResult(
                 explain_plan=customized_plan,
-                success=True,  # Fallback is considered successful
+                success=True,
                 warnings=["Using fallback EXPLAIN plan due to MCP unavailability"],
                 timeout_occurred=timeout_occurred,
                 fallback_used=True,
                 connection_attempts=connection_attempts,
                 processing_time=processing_time,
-                query_cost=None,  # No real cost available in fallback
-                execution_time=None,  # No real execution time in fallback
-                error_message=None,  # No error since fallback worked
-                mcp_tools_used=[]  # No MCP tools used in fallback
+                query_cost=None,
+                execution_time=None,
+                error_message=None,
+                mcp_tools_used=[]
             )
             
         except Exception as e:
@@ -722,7 +726,7 @@ class EnhancedExplainGenerator:
         elif query_lower.startswith('update'):
             return "update"
         elif query_lower.startswith('delete'):
-            return "update"  # Similar pattern to update
+            return "update" 
         else:
             return "default"
     
@@ -743,7 +747,7 @@ class EnhancedExplainGenerator:
                 if len(table_matches) > 1:
                     customized += f"\n7) Additional Tables: {', '.join(table_matches[1:])}"
         except:
-            pass  # If regex fails, just use original plan
+            pass
         
         # Add timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -759,9 +763,6 @@ class EnhancedExplainGenerator:
         
         self.logger.info("[EXPLAIN-GEN] Enhanced cleanup completed")
         
-
-
-
 # Factory function for backward compatibility
 def create_explain_generator():
     """Factory function to create enhanced explain generator."""

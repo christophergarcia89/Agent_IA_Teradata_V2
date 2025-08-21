@@ -50,7 +50,7 @@ async def main() -> None:
             # Add timeout to prevent hanging
             result = await asyncio.wait_for(
                 workflow.process_query(sample_query),
-                timeout=120.0  # 2 minute timeout
+                timeout=120.0
             )
         except asyncio.TimeoutError:
             logger.warning("Query processing timed out - this is expected during first run")

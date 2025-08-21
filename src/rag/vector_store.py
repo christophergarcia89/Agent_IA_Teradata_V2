@@ -1,363 +1,321 @@
 """
-Vector store implementation for RAG system.
-Handles document embedding and similarity search.
+Vector store
 """
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+import os
+import ssl
+import warnings
+import gc
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
+import numpy as np
+import json
+import torch
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+# Corporate SSL bypass
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ['REQUESTS_CA_BUNDLE'] = ''
+os.environ['CURL_CA_BUNDLE'] = ''
+warnings.filterwarnings('ignore')
+
+from sentence_transformers import SentenceTransformer
 from langchain.schema import Document
 
 from config.settings import settings
 from src.rag.document_loader import DocumentLoader, SQLExample
 
 
-class VectorStore:
-    """Vector store for SQL examples and documentation."""
+class CorporateVectorStore:
+    """
+    Corporate-safe vector store implementation with enhanced features.
+    Uses local file storage and pre-computed embeddings to avoid ChromaDB issues.
+    Includes progressive loading, batch processing, and robust error handling.
+    """
     
-    def __init__(self):
+    def __init__(
+        self, 
+        collection_name: str = "teradata_sql_knowledge",
+        persist_directory: Optional[str] = None,
+        embedding_model: Optional[str] = None
+    ):
         self.logger = logging.getLogger(__name__)
-        # NO inicializar embeddings inmediatamente - hacerlo lazy
-        self._embeddings = None
-        self._embedding_model = settings.embedding_model
-        self.vectorstore: Optional[Chroma] = None
-        self.persist_directory = Path(settings.chroma_persist_directory)
+        
+        # Configuration
+        self.collection_name = collection_name
+        self.persist_directory = Path(persist_directory or settings.chroma_persist_directory)
+        self._embedding_model_name = embedding_model or settings.embedding_model
+        
+        # Create directories
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        
+        # Storage files
+        self.documents_file = self.persist_directory / f"{collection_name}_docs.json"
+        self.embeddings_file = self.persist_directory / f"{collection_name}_embeddings.npy" 
+        self.metadata_file = self.persist_directory / f"{collection_name}_metadata.json"
+        
+        # In-memory storage
+        self._embedding_model = None
+        self.documents = []
+        self.embeddings = None
+        self.metadata = []
+        
+        # Tracking and caching
+        self._initialized = False
+        self._loading_started = False
         self._embedding_cache = {}
         
-    def clear_embedding_cache(self):
-        """Clear embedding cache and force reload."""
-        self._embeddings = None
-        self._embedding_cache.clear()
-        import gc
-        gc.collect()
+        # Progressive loading configuration
+        self.batch_size = 128
+        self.chunk_size = 500
+        self.chunk_overlap = 100
+        self.loading_chunk_size = 20  # Chunk size for background loading
     
-    def _create_embedding_safe_mode_1(self):
-        """Create embeddings with special handling for meta tensor issues."""
-        try:
-            # Import here to avoid global dependency issues
-            from sentence_transformers import SentenceTransformer
-            import torch
-            
-            # Force eager loading to avoid lazy/meta tensor issues
-            model = SentenceTransformer(
-                self._embedding_model,
-                device='cpu',
-                cache_folder=None,  # Force local loading
-                use_auth_token=False  # Disable auth to avoid network issues
-            )
-            
-            # Manually move to CPU and ensure materialization
-            if hasattr(model, 'to'):
-                try:
-                    # Try the new recommended method first
-                    model = model.to_empty(device='cpu')
-                except (AttributeError, Exception):
-                    # Fallback to regular method
-                    model = model.to('cpu')
-            
-            # Wrap in LangChain HuggingFace embeddings
-            from langchain_huggingface import HuggingFaceEmbeddings
-            return HuggingFaceEmbeddings(
-                model_name=self._embedding_model,
-                model=model,  # Use our pre-loaded model
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
-            
-        except Exception as safe_error:
-            self.logger.warning(f"Safe mode 1 failed: {safe_error}")
-            # Fallback to basic creation
-            return HuggingFaceEmbeddings(
-                model_name=self._embedding_model,
-                model_kwargs={'device': 'cpu', 'trust_remote_code': False}
-            )
+    def clear_embedding_cache(self):
+        """Clear embedding cache and force reload - from original best practices."""
+        self._embedding_model = None
+        self._embedding_cache.clear()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self.logger.info("[CACHE] Embedding cache cleared")
+    
+    def _create_embedding_safe_mode_corporate(self):
+        """
+        Corporate-safe embedding model creation with multiple fallback approaches.
+        Combines original best practices with corporate SSL bypass.
+        """
+        # Try multiple approaches to handle PyTorch tensor issues
+        attempts = [
+            # Approach 1: Corporate-optimized primary model
+            lambda: self._create_model_approach_1(),
+            # Approach 2: Fallback with different configuration
+            lambda: self._create_model_approach_2(), 
+            # Approach 3: Alternative model
+            lambda: self._create_model_approach_3(),
+            # Approach 4: Ultra-simple fallback
+            lambda: self._create_model_approach_4()
+        ]
         
-    @property
-    def embeddings(self):
-        """Lazy loading of embeddings with robust error handling."""
-        if self._embeddings is None:
-            self.logger.info(f"[LOADING] Loading embedding model: {self._embedding_model}")
-            self.logger.info("[WAIT] This may take a few minutes on first run...")
+        for i, approach in enumerate(attempts, 1):
+            try:
+                self.logger.info(f"[EMBEDDING] Trying approach {i}/4...")
+                
+                # Force garbage collection before attempting
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                model = approach()
+                
+                # Test the model
+                test_result = model.encode(["test"])
+                if test_result is not None and len(test_result) > 0:
+                    dimensions = len(test_result[0]) if hasattr(test_result[0], '__len__') else len(test_result)
+                    self.logger.info(f"[EMBEDDING] SUCCESS Model loaded successfully (approach {i}) - Dimensions: {dimensions}")
+                    return model
+                else:
+                    self.logger.warning(f"[EMBEDDING] WARNING Approach {i} loaded but test failed")
+                    
+            except Exception as e:
+                self.logger.warning(f"[EMBEDDING] FAILED Approach {i} failed: {str(e)[:100]}...")
+                
+                if i == len(attempts):
+                    self.logger.error(f"[EMBEDDING] FAILED All embedding approaches failed")
+                    raise RuntimeError(f"Cannot load embedding model after {len(attempts)} attempts. Last error: {e}")
+        
+        return None
+    
+    def _create_model_approach_1(self):
+        """Primary corporate approach with tensor handling."""
+        model = SentenceTransformer(
+            self._embedding_model_name,
+            device='cpu',
+            cache_folder=None,  # Force local loading
+            use_auth_token=False  # Disable auth to avoid network issues
+        )
+        
+        # Handle tensor materialization issues
+        if hasattr(model, 'to'):
+            try:
+                model = model.to_empty(device='cpu')
+            except (AttributeError, Exception):
+                model = model.to('cpu')
+        
+        return model
+    
+    def _create_model_approach_2(self):
+        """Fallback with explicit device configuration."""
+        return SentenceTransformer(
+            self._embedding_model_name,
+            device='cpu'
+        )
+    
+    def _create_model_approach_3(self):
+        """Alternative model fallback."""
+        return SentenceTransformer(
+            'all-MiniLM-L6-v2',
+            device='cpu'
+        )
+    
+    def _create_model_approach_4(self):
+        """Ultra-simple fallback."""
+        return SentenceTransformer('all-MiniLM-L6-v2')
+    
+    def _ensure_embedding_model(self):
+        """Load embedding model on demand with robust error handling."""
+        if self._embedding_model is None:
+            self.logger.info(f"[EMBEDDING] MODEL Loading model: {self._embedding_model_name}")
+            self.logger.info("[EMBEDDING] LOADING This may take a few minutes on first run...")
             
-            # Try multiple approaches to handle PyTorch tensor issues
-            attempts = [
-                # Approach 1: Try to avoid the meta tensor issue completely
-                lambda: self._create_embedding_safe_mode_1(),
-                # Approach 2: Basic CPU configuration (most reliable)
-                lambda: HuggingFaceEmbeddings(
-                    model_name=self._embedding_model,
-                    model_kwargs={'device': 'cpu', 'torch_dtype': 'float32'},
-                    encode_kwargs={'normalize_embeddings': True}
-                ),
-                # Approach 3: Even more basic configuration
-                lambda: HuggingFaceEmbeddings(
-                    model_name=self._embedding_model,
-                    model_kwargs={'device': 'cpu'}
-                ),
-                # Approach 4: Alternative model as fallback
-                lambda: HuggingFaceEmbeddings(
-                    model_name="jinaai/jina-embeddings-v2-base-code",
-                    model_kwargs={'device': 'cpu'}
-                )
+            self._embedding_model = self._create_embedding_safe_mode_corporate()
+            
+            if self._embedding_model is None:
+                raise RuntimeError("Failed to load any embedding model")
+            
+            # Warm-up the model to ensure consistent results
+            self._warmup_embedding_model()
+    
+    def _warmup_embedding_model(self):
+        """Warm up the embedding model to ensure consistent search results."""
+        try:
+            self.logger.info("[EMBEDDING] WARMUP Warming up embedding model...")
+            
+            # Test embeddings with sample queries to initialize internal state
+            warmup_queries = [
+                "SELECT * FROM table",
+                "UPDATE table SET column = value", 
+                "CREATE TABLE example",
+                "INSERT INTO table VALUES",
+                "SQL examples"
             ]
             
-            for i, approach in enumerate(attempts, 1):
+            for query in warmup_queries:
                 try:
-                    self.logger.info(f"[ATTEMPT {i}] Trying approach {i}/4...")
-                    
-                    # Force garbage collection before attempting
-                    import gc
-                    import torch
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    
-                    self._embeddings = approach()
-                    
-                    # Test the embedding to ensure it works
-                    test_embedding = self._embeddings.embed_query("test")
-                    if test_embedding and len(test_embedding) > 0:
-                        self.logger.info(f"[SUCCESS] Embedding model loaded successfully (approach {i})")
-                        break
-                    else:
-                        self.logger.warning(f"[WARNING] Approach {i} loaded but test failed")
-                        self._embeddings = None
-                        
+                    embedding = self._embedding_model.encode([query])
+                    if embedding is not None and len(embedding) > 0:
+                        continue  # Success
                 except Exception as e:
-                    self.logger.warning(f"[FAILED] Approach {i} failed: {str(e)[:100]}...")
-                    self._embeddings = None
-                    
-                    if i == len(attempts):
-                        self.logger.error(f"[CRITICAL] All embedding approaches failed")
-                        raise RuntimeError(f"Cannot load embedding model after {len(attempts)} attempts. Last error: {e}")
+                    self.logger.warning(f"[EMBEDDING] WARMUP Warning during warmup: {e}")
             
-        return self._embeddings
-        
-    async def initialize(self) -> None:
-        """Initialize the vector store with fast startup and progressive loading."""
-        try:
-            # Create persist directory if it doesn't exist
-            self.persist_directory.mkdir(parents=True, exist_ok=True)
-            self.logger.info("[CHROMA] Starting fast ChromaDB initialization...")
+            self.logger.info("[EMBEDDING] WARMUP Model warmed up successfully")
             
-            # FAST INITIALIZATION: Try to load existing collection first
-            try:
-                # First, try to connect to existing collection (should be fast)
-                self.logger.info("[CHROMA] Attempting to connect to existing collection...")
-                
-                def create_chroma_fast():
-                    # Use existing collection if available
-                    return Chroma(
-                        persist_directory=str(self.persist_directory),
-                        embedding_function=self.embeddings,
-                        collection_name="teradata_sql_knowledge"
-                    )
-                
-                loop = asyncio.get_event_loop()
-                self.vectorstore = await asyncio.wait_for(
-                    loop.run_in_executor(None, create_chroma_fast),
-                    timeout=30.0  # Reduced timeout for existing collection
-                )
-                
-                # Quick check if collection has documents
-                doc_count = await self._get_collection_count()
-                
-                if doc_count > 0:
-                    self.logger.info(f"[CHROMA] Found existing collection with {doc_count} documents")
-                    self.logger.info("[CHROMA] ChromaDB ready with existing data!")
-                    return
-                else:
-                    self.logger.info("[CHROMA] Collection exists but is empty - will load documents")
-                
-            except asyncio.TimeoutError:
-                self.logger.warning("[CHROMA] Timeout connecting to existing collection")
-                # Create new in-memory collection for immediate use
-                self.vectorstore = Chroma(
-                    embedding_function=self.embeddings,
-                    collection_name="teradata_sql_knowledge_memory"
-                )
-                self.logger.info("[CHROMA] Created in-memory collection as fallback")
-            
-            except Exception as init_error:
-                self.logger.warning(f"[CHROMA] Error with existing collection: {init_error}")
-                # Create new collection
-                self.vectorstore = Chroma(
-                    persist_directory=str(self.persist_directory),
-                    embedding_function=self.embeddings,
-                    collection_name="teradata_sql_knowledge"
-                )
-                self.logger.info("[CHROMA] Created new collection")
-            
-            # PROGRESSIVE LOADING: Start document loading in background immediately
-            self.logger.info("[CHROMA] Starting immediate background document loading...")
-            asyncio.create_task(self._fast_progressive_loading())
-            
-            self.logger.info("[CHROMA] [SUCCESS] Vector store initialized and ready!")
-            self.logger.info("[CHROMA] [LOADING] Documents loading progressively in background...")
-                
         except Exception as e:
-            self.logger.error(f"[CHROMA] Error initializing vector store: {e}")
-            # Create basic fallback
-            try:
-                self.vectorstore = Chroma(
-                    embedding_function=self.embeddings,
-                    collection_name="teradata_sql_fallback"
-                )
-                self.logger.info("[CHROMA] Created basic fallback vector store")
-            except Exception as fallback_error:
-                self.logger.error(f"[CHROMA] Even fallback failed: {fallback_error}")
-                raise
-            
-    async def load_knowledge_base(self) -> None:
-        """Load all documents into the vector store SYNCHRONOUSLY for complete initialization."""
-        try:
-            self.logger.info("[DOCS] Starting COMPLETE document loading process...")
-            from src.rag.document_loader import DocumentLoader
-            loader = DocumentLoader()
-            
-            # Load SQL examples
-            self.logger.info("[DOCS] Loading SQL examples...")
-            sql_examples = loader.load_sql_examples()
-            sql_documents = loader.create_documents_from_examples(sql_examples)
-            self.logger.info(f"[DOCS] Loaded {len(sql_documents)} SQL example documents")
-            
-            # Load documentation
-            self.logger.info("[DOCS] Loading documentation files...")
-            doc_documents = loader.load_documentation()
-            self.logger.info(f"[DOCS] Loaded {len(doc_documents)} documentation files")
-            
-            # Combine all documents
-            all_documents = sql_documents + doc_documents
-            
-            if not all_documents:
-                self.logger.warning("[DOCS] No documents found to load")
-                return
-                
-            # Chunk documents
-            self.logger.info("[DOCS] Chunking documents...")
-            chunked_docs = loader.chunk_documents(
-                all_documents,
-                chunk_size=settings.chunk_size,
-                chunk_overlap=settings.chunk_overlap
-            )
-            self.logger.info(f"[DOCS] Created {len(chunked_docs)} document chunks")
-            
-            # Add to vector store with robust batch processing
-            self.logger.info("[DOCS] Adding documents to vector store (COMPLETE LOADING)...")
-            await self._add_all_documents_complete(chunked_docs)
-            
-            # Verify final count
-            final_count = await self._get_collection_count()
-            self.logger.info(f"[DOCS] [COMPLETE] COMPLETE LOADING FINISHED: {final_count} documents in ChromaDB")
-                
-        except Exception as e:
-            self.logger.error(f"[DOCS] Error in complete knowledge base loading: {e}")
-            raise  # Re-raise to fail workflow initialization if documents can't be loaded
+            self.logger.warning(f"[EMBEDDING] WARMUP Warning: Warmup failed: {e}")
+            # Don't fail initialization if warmup fails
     
-    async def _add_all_documents_complete(self, documents: List) -> None:
-        """Add all documents with progress tracking and error handling."""
+    def _load_persisted_data(self):
+        """Load persisted documents and embeddings with enhanced error handling."""
         try:
-            total_docs = len(documents)
-            batch_size = 50  # Larger batches for efficiency
-            successful_batches = 0
-            failed_batches = 0
+            loaded_count = 0
             
-            self.logger.info(f"[DOCS] Processing {total_docs} documents in batches of {batch_size}")
+            # Load documents
+            if self.documents_file.exists():
+                with open(self.documents_file, 'r', encoding='utf-8') as f:
+                    self.documents = json.load(f)
+                loaded_count += len(self.documents)
             
-            # Process in batches with progress reporting
-            for i in range(0, total_docs, batch_size):
-                batch = documents[i:i + batch_size]
-                batch_num = i // batch_size + 1
-                total_batches = (total_docs - 1) // batch_size + 1
-                
-                try:
-                    # Add batch with extended timeout
-                    await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None, 
-                            lambda: self.vectorstore.add_documents(batch)
-                        ),
-                        timeout=60.0  # 60 seconds per batch
-                    )
-                    
-                    successful_batches += 1
-                    progress = (batch_num / total_batches) * 100
-                    self.logger.info(f"[DOCS] [SUCCESS] Batch {batch_num}/{total_batches} ({progress:.1f}%) - {len(batch)} docs added")
-                    
-                    # Short pause between batches
-                    await asyncio.sleep(0.5)
-                    
-                except asyncio.TimeoutError:
-                    failed_batches += 1
-                    self.logger.error(f"[DOCS] [ERROR] Batch {batch_num} timed out")
-                    
-                except Exception as batch_error:
-                    failed_batches += 1
-                    self.logger.error(f"[DOCS] [ERROR] Batch {batch_num} failed: {batch_error}")
+            # Load embeddings
+            if self.embeddings_file.exists():
+                self.embeddings = np.load(self.embeddings_file)
+                # Validate embeddings shape
+                if len(self.documents) != len(self.embeddings):
+                    self.logger.warning(f"[STORAGE] WARNING Mismatch: {len(self.documents)} docs vs {len(self.embeddings)} embeddings")
             
-            # Summary
-            self.logger.info(f"[DOCS] Batch processing complete: {successful_batches} successful, {failed_batches} failed")
+            # Load metadata
+            if self.metadata_file.exists():
+                with open(self.metadata_file, 'r', encoding='utf-8') as f:
+                    self.metadata = json.load(f)
             
-            if failed_batches > successful_batches:
-                raise RuntimeError(f"Too many batch failures: {failed_batches}/{successful_batches + failed_batches}")
+            if loaded_count > 0:
+                self.logger.info(f"[STORAGE] LOADED Loaded {loaded_count} persisted documents")
+                return True
+            
+            return False
             
         except Exception as e:
-            self.logger.error(f"[DOCS] Error in complete document addition: {e}")
+            self.logger.warning(f"[STORAGE] ERROR Error loading persisted data: {e}")
+            self.documents = []
+            self.embeddings = None
+            self.metadata = []
+            return False
+    
+    def _save_persisted_data(self):
+        """Save documents and embeddings to disk with validation."""
+        try:
+            # Validate data consistency
+            doc_count = len(self.documents)
+            emb_count = len(self.embeddings) if self.embeddings is not None else 0
+            meta_count = len(self.metadata)
+            
+            if doc_count != emb_count:
+                self.logger.warning(f"[STORAGE] WARNING Data inconsistency: {doc_count} docs vs {emb_count} embeddings")
+            
+            # Save documents
+            with open(self.documents_file, 'w', encoding='utf-8') as f:
+                json.dump(self.documents, f, ensure_ascii=False, indent=2)
+            
+            # Save embeddings
+            if self.embeddings is not None:
+                np.save(self.embeddings_file, self.embeddings)
+            
+            # Save metadata
+            with open(self.metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(self.metadata, f, ensure_ascii=False, indent=2)
+            
+            self.logger.info(f"[STORAGE] SAVED Saved {doc_count} documents, {emb_count} embeddings, {meta_count} metadata")
+            
+        except Exception as e:
+            self.logger.error(f"[STORAGE] ERROR Error saving data: {e}")
             raise
     
-    async def load_knowledge_base_incremental(self) -> None:
-        """Load documents incrementally with better timeout handling."""
+    async def initialize(self) -> None:
+        """
+        Initialize the corporate vector store with fast startup and progressive loading.
+        Enhanced version of original initialize method.
+        """
         try:
-            self.logger.info("[DOCS] Starting incremental document loading...")
-            from src.rag.document_loader import DocumentLoader
-            loader = DocumentLoader()
+            self.logger.info("[INIT] CORPORATE Starting Corporate Vector Store initialization...")
             
-            # Load documents in smaller batches
-            self.logger.info("[DOCS] Loading SQL examples...")
-            sql_examples = loader.load_sql_examples()
+            # Quick check for existing data
+            if self._load_persisted_data():
+                doc_count = len(self.documents)
+                self.logger.info(f"[INIT] SUCCESS Found existing collection with {doc_count} documents")
+                self.logger.info("[INIT] READY Vector store ready with existing data!")
+                self._initialized = True
+                return
             
-            if sql_examples:
-                # Convert SQL examples to LangChain Documents
-                sql_docs = loader.create_documents_from_examples(sql_examples)
-                await self._add_documents_batch(sql_docs, "SQL examples", batch_size=10)
+            # No existing data - will need to load
+            self.logger.info("[INIT] FILE No existing data found")
+            self.logger.info("[INIT] READY Vector store initialized - Documents will load progressively")
             
-            self.logger.info("[DOCS] Loading documentation files...")
-            doc_files = loader.load_documentation()
+            # Start fast progressive loading
+            if not self._loading_started:
+                self._loading_started = True
+                asyncio.create_task(self._fast_progressive_loading())
             
-            if doc_files:
-                # Convertir documentos con metadatos específicos
-                for doc in doc_files:
-                    doc.metadata.update({
-                        "type": "documentation",
-                        "doc_type": "documentation",
-                        "source_type": "documentation"
-                    })
-                await self._add_documents_batch(doc_files, "documentation", batch_size=5)
-                
-            self.logger.info("[DOCS] Incremental loading completed successfully")
+            self._initialized = True
             
         except Exception as e:
-            self.logger.error(f"[DOCS] Error in incremental loading: {e}")
+            self.logger.error(f"[INIT] ERROR Initialization error: {e}")
+            raise
     
-    async def _fast_progressive_loading(self) -> None:
-        """Fast progressive loading optimized for immediate use."""
+    async def _fast_progressive_loading(self):
+        """
+        Fast progressive loading with prioritized content.
+        Enhanced version from original implementation.
+        """
         try:
-            self.logger.info("[DOCS] [LAUNCH] Starting FAST progressive loading...")
+            self.logger.info("[LOADING] STARTING Starting FAST progressive loading...")
             
             # Small delay to let initialization complete
             await asyncio.sleep(1.0)
             
-            from src.rag.document_loader import DocumentLoader
             loader = DocumentLoader()
             
             # PHASE 1: Load critical SQL examples first (small batch)
-            self.logger.info("[DOCS] PHASE 1: Loading critical SQL examples...")
+            self.logger.info("[LOADING] PHASE1 PHASE 1: Loading critical SQL examples...")
             
             try:
                 sql_examples = loader.load_sql_examples()
@@ -367,9 +325,9 @@ class VectorStore:
                     critical_examples = sql_examples[:10]  
                     sql_docs = loader.create_documents_from_examples(critical_examples)
                     
-                    # Add immediately with short timeout
+                    # Add immediately with corporate-safe processing
                     await self._add_documents_fast(sql_docs, "critical_examples", batch_size=5)
-                    self.logger.info(f"[DOCS] [SUCCESS] Loaded {len(critical_examples)} critical examples")
+                    self.logger.info(f"[LOADING] SUCCESS Loaded {len(critical_examples)} critical examples")
                 
                     # PHASE 2: Load remaining examples in background
                     if len(sql_examples) > 10:
@@ -377,494 +335,565 @@ class VectorStore:
                         asyncio.create_task(self._load_remaining_documents(remaining_examples, loader))
                         
             except Exception as phase1_error:
-                self.logger.error(f"[DOCS] Phase 1 error: {phase1_error}")
+                self.logger.error(f"[LOADING] ERROR Phase 1 error: {phase1_error}")
             
             # PHASE 3: Load documentation (low priority)
             try:
-                self.logger.info("[DOCS] PHASE 3: Loading documentation...")
+                self.logger.info("[LOADING] PHASE3 PHASE 3: Loading documentation...")
                 doc_files = loader.load_documentation()
                 
                 if doc_files:
                     asyncio.create_task(self._add_documents_fast(doc_files, "documentation", batch_size=2))
                     
             except Exception as phase3_error:
-                self.logger.error(f"[DOCS] Phase 3 error: {phase3_error}")
+                self.logger.error(f"[LOADING] ERROR Phase 3 error: {phase3_error}")
             
-            self.logger.info("[DOCS] [SUCCESS] Fast progressive loading started successfully")
+            self.logger.info("[LOADING] SUCCESS Fast progressive loading started successfully")
             
         except Exception as e:
-            self.logger.error(f"[DOCS] Fast progressive loading error: {e}")
+            self.logger.error(f"[LOADING] ERROR Fast progressive loading error: {e}")
     
     async def _load_remaining_documents(self, remaining_examples: list, loader) -> None:
-        """Load remaining documents in background with chunking."""
+        """Load remaining documents in background with chunking and enhanced error handling."""
         try:
-            self.logger.info(f"[DOCS] Loading remaining {len(remaining_examples)} examples in background...")
+            # Validate input parameters
+            if not remaining_examples:
+                self.logger.warning("[LOADING] WARNING No remaining examples to load")
+                return
             
-            # Process in chunks of 20
-            chunk_size = 20
+            if loader is None:
+                self.logger.error("[LOADING] ERROR DocumentLoader is None")
+                return
+            
+            self.logger.info(f"[LOADING] PROCESSING Loading {len(remaining_examples)} remaining examples...")
+            
+            # Use configurable chunk size (fallback to default if not set)
+            chunk_size = getattr(self, 'loading_chunk_size', 20)
+            total_chunks = (len(remaining_examples) + chunk_size - 1) // chunk_size
+            
+            # Process in chunks with progress tracking
             for i in range(0, len(remaining_examples), chunk_size):
-                chunk = remaining_examples[i:i + chunk_size]
-                sql_docs = loader.create_documents_from_examples(chunk)
+                chunk_num = i // chunk_size + 1
                 
-                await self._add_documents_fast(sql_docs, f"batch_{i//chunk_size + 1}", batch_size=10)
-                
-                # Progress report
-                processed = min(i + chunk_size, len(remaining_examples))
-                progress = (processed / len(remaining_examples)) * 100
-                self.logger.info(f"[DOCS] [PROGRESS] Progress: {processed}/{len(remaining_examples)} ({progress:.1f}%)")
-                
-                # Short break between chunks
-                await asyncio.sleep(0.5)
+                try:
+                    chunk = remaining_examples[i:i + chunk_size]
+                    
+                    self.logger.info(f"[LOADING] CHUNK Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} examples)")
+                    
+                    # Create documents from chunk
+                    sql_docs = loader.create_documents_from_examples(chunk)
+                    
+                    if sql_docs:
+                        # Add documents with timeout protection
+                        await asyncio.wait_for(
+                            self._add_documents_fast(sql_docs, f"batch_{chunk_num}", batch_size=10),
+                            timeout=60.0  # 60 seconds timeout per chunk
+                        )
+                        
+                        self.logger.info(f"[LOADING] SUCCESS Chunk {chunk_num}/{total_chunks} completed")
+                    else:
+                        self.logger.warning(f"[LOADING] WARNING Chunk {chunk_num} produced no documents")
+                    
+                    # Memory cleanup and delay between chunks
+                    if chunk_num % 5 == 0:  # Every 5 chunks
+                        gc.collect()  # Force garbage collection
+                    
+                    # Progressive delay - shorter for first chunks, longer for later ones
+                    delay = min(2.0 + (chunk_num * 0.1), 5.0)
+                    await asyncio.sleep(delay)
+                    
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"[LOADING] TIMEOUT Chunk {chunk_num} timed out - skipping")
+                    continue
+                    
+                except Exception as chunk_error:
+                    self.logger.error(f"[LOADING] ERROR Chunk {chunk_num} failed: {chunk_error}")
+                    # Continue with next chunk instead of failing completely
+                    continue
             
-            self.logger.info("[DOCS] [SUCCESS] All documents loaded successfully!")
+            self.logger.info(f"[LOADING] SUCCESS Remaining documents loading completed ({total_chunks} chunks processed)")
             
         except Exception as e:
-            self.logger.error(f"[DOCS] Error loading remaining documents: {e}")
+            self.logger.error(f"[LOADING] ERROR Critical error loading remaining documents: {e}")
+            # Don't re-raise exception as this runs in background task
     
-    async def _add_documents_fast(self, documents: List, doc_type: str, batch_size: int = 5) -> None:
-        """Add documents with optimized timeout and error handling."""
+    async def _add_documents_fast(self, documents: List[Document], doc_type: str, batch_size: int = 5) -> None:
+        """
+        Add documents with optimized timeout and error handling.
+        Corporate-safe version of original fast add method.
+        """
         try:
-            from src.rag.document_loader import DocumentLoader
+            if not documents:
+                return
+            
             loader = DocumentLoader()
             
             # Chunk documents with smaller chunks for faster processing
             chunked_docs = loader.chunk_documents(
                 documents,
-                chunk_size=500,  # Smaller chunks
-                chunk_overlap=100  # Less overlap
+                chunk_size=self.chunk_size,  # Configurable chunk size
+                chunk_overlap=self.chunk_overlap  # Configurable overlap
             )
             
-            self.logger.info(f"[DOCS] Adding {len(chunked_docs)} {doc_type} chunks (batch_size: {batch_size})")
+            self.logger.info(f"[ADD] ADDING Adding {len(chunked_docs)} {doc_type} chunks (batch_size: {batch_size})")
             
-            # Process in very small batches with aggressive timeouts
+            # Process in small batches
             for i in range(0, len(chunked_docs), batch_size):
                 batch = chunked_docs[i:i + batch_size]
                 
                 try:
-                    # Ultra-fast timeout for each batch
+                    # Add batch with timeout protection
                     await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None, 
-                            lambda: self.vectorstore.add_documents(batch)
-                        ),
-                        timeout=15.0  # 15 seconds per batch
-                    )
-                    
-                    batch_num = i//batch_size + 1
-                    total_batches = (len(chunked_docs)-1)//batch_size + 1
-                    self.logger.info(f"[DOCS] [SUCCESS] Batch {batch_num}/{total_batches} added")
-                    
-                    # Micro break
-                    await asyncio.sleep(0.1)
-                    
-                except asyncio.TimeoutError:
-                    self.logger.warning(f"[DOCS] [WARNING] Timeout on batch {i//batch_size + 1} of {doc_type}")
-                    continue
-                except Exception as batch_error:
-                    self.logger.warning(f"[DOCS] [WARNING] Error on batch {i//batch_size + 1}: {batch_error}")
-                    continue
-            
-            self.logger.info(f"[DOCS] [SUCCESS] Completed {doc_type} loading")
-            
-        except Exception as e:
-            self.logger.error(f"[DOCS] Error in fast document addition for {doc_type}: {e}")
-
-    async def load_knowledge_base_background(self) -> None:
-        """Load documents in background without blocking initialization."""
-        try:
-            self.logger.info("[DOCS] Starting background document loading...")
-            
-            # Add a small delay to let initialization complete
-            await asyncio.sleep(2.0)
-            
-            # Load with longer timeout since it's background
-            await asyncio.wait_for(
-                self.load_knowledge_base_incremental(),
-                timeout=600.0  # 10 minute timeout for background loading
-            )
-            
-            self.logger.info("[DOCS] Background loading completed")
-            
-        except asyncio.TimeoutError:
-            self.logger.warning("[DOCS] Background loading timed out - partial documents may be available")
-        except Exception as e:
-            self.logger.error(f"[DOCS] Error in background loading: {e}")
-    
-    async def _add_documents_batch(self, documents: List, doc_type: str, batch_size: int = 10) -> None:
-        """Add documents in batches to avoid timeout."""
-        try:
-            from src.rag.document_loader import DocumentLoader
-            loader = DocumentLoader()
-            
-            # Chunk documents
-            chunked_docs = loader.chunk_documents(
-                documents,
-                chunk_size=settings.chunk_size,
-                chunk_overlap=settings.chunk_overlap
-            )
-            
-            self.logger.info(f"[DOCS] Adding {len(chunked_docs)} {doc_type} chunks in batches of {batch_size}")
-            
-            # Process in batches
-            for i in range(0, len(chunked_docs), batch_size):
-                batch = chunked_docs[i:i + batch_size]
-                
-                try:
-                    # Add batch with timeout
-                    await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None, 
-                            lambda: self.vectorstore.add_documents(batch)
-                        ),
+                        self._process_batch_corporate_safe(batch),
                         timeout=30.0  # 30 seconds per batch
                     )
                     
-                    self.logger.info(f"[DOCS] Added batch {i//batch_size + 1}/{(len(chunked_docs)-1)//batch_size + 1} ({len(batch)} docs)")
+                    self.logger.info(f"[ADD] SUCCESS Added batch {i//batch_size + 1}/{(len(chunked_docs) + batch_size - 1)//batch_size}")
                     
                     # Small delay between batches
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1.0)
                     
                 except asyncio.TimeoutError:
-                    self.logger.warning(f"[DOCS] Timeout adding batch {i//batch_size + 1} of {doc_type}")
+                    self.logger.warning(f"[ADD] Batch {i//batch_size + 1} timeout - skipping")
                     continue
+                    
                 except Exception as batch_error:
-                    self.logger.error(f"[DOCS] Error adding batch {i//batch_size + 1}: {batch_error}")
+                    self.logger.warning(f"[ADD] ERROR Batch {i//batch_size + 1} error: {batch_error}")
                     continue
             
-            self.logger.info(f"[DOCS] Completed adding {doc_type} documents")
+            self.logger.info(f"[ADD] COMPLETED Completed adding {doc_type} documents")
             
         except Exception as e:
-            self.logger.error(f"[DOCS] Error in batch processing for {doc_type}: {e}")
+            self.logger.error(f"[ADD] ERROR Error in fast add documents: {e}")
     
-    async def search_similar_examples(self, query: str, k: int = None) -> List[Document]:
-        """Search for similar SQL examples."""
-        if not self.vectorstore:
-            self.logger.warning("Vector store not initialized - returning empty results")
-            return []
-            
-        k = k or settings.top_k_retrieval
+    async def _process_batch_corporate_safe(self, batch: List[Document]):
+        """Process a batch of documents in corporate-safe manner."""
+        # Prepare data
+        doc_texts = [doc.page_content for doc in batch]
+        doc_metadata = [doc.metadata for doc in batch]
         
+        # Ensure embedding model is loaded
+        self._ensure_embedding_model()
+        
+        # Calculate embeddings
+        new_embeddings = self._embedding_model.encode(
+            doc_texts, 
+            show_progress_bar=False,  # Disable progress bar for batch processing
+            batch_size=self.batch_size
+        )
+        
+        # Add to storage
+        self.documents.extend(doc_texts)
+        self.metadata.extend(doc_metadata)
+        
+        if self.embeddings is None:
+            self.embeddings = new_embeddings
+        else:
+            self.embeddings = np.vstack([self.embeddings, new_embeddings])
+        
+        # Persist data periodically
+        if len(self.documents) % 50 == 0:  # Save every 50 documents
+            self._save_persisted_data()
+    
+    async def load_knowledge_base(self) -> None:
+        """
+        Load all knowledge base documents with enhanced error handling.
+        Enhanced version of original method.
+        """
         try:
-            # Ultra-safe search with very short timeout
-            results = await asyncio.wait_for(
-                self._async_safe_search(query, k, {"type": "sql_example"}),
-                timeout=2.0  # Very short timeout
+            self.logger.info("[DOCS] STARTING Starting knowledge base loading...")
+            
+            # Initialize document loader
+            loader = DocumentLoader()
+            
+            # Load SQL examples
+            self.logger.info("[DOCS] Loading SQL examples...")
+            sql_examples = loader.load_sql_examples()
+            sql_documents = loader.create_documents_from_examples(sql_examples)
+            self.logger.info(f"[DOCS] SUCCESS Loaded {len(sql_documents)} SQL examples")
+            
+            # Load documentation
+            self.logger.info("[DOCS] Loading documentation...")
+            doc_documents = loader.load_documentation()
+            self.logger.info(f"[DOCS] SUCCESS Loaded {len(doc_documents)} documentation files")
+            
+            # Combine documents
+            all_documents = sql_documents + doc_documents
+            
+            if not all_documents:
+                self.logger.warning("[DOCS] WARNING No documents found")
+                return
+            
+            # Chunk documents
+            self.logger.info("[DOCS] PROCESSING Chunking documents...")
+            chunked_docs = loader.chunk_documents(
+                all_documents,
+                chunk_size=settings.chunk_size,
+                chunk_overlap=settings.chunk_overlap
             )
+            self.logger.info(f"[DOCS] SUCCESS Created {len(chunked_docs)} chunks")
             
-            self.logger.debug(f"Found {len(results)} similar examples for query")
-            return results
+            # Add to vector store using fast method
+            await self._add_documents_fast(chunked_docs, "knowledge_base", batch_size=10)
             
-        except asyncio.TimeoutError:
-            self.logger.info(f"Search timeout for similar examples - documents may still be loading")
-            return []
-        except Exception as e:
-            self.logger.warning(f"Error searching similar examples: {e}")
-            return []
-    
-    async def search_documentation(self, query: str, k: int = None) -> List[Document]:
-        """Search for relevant documentation with enhanced filters."""
-        if not self.vectorstore:
-            self.logger.warning("Vector store not initialized - returning empty results")
-            return []
+            # Final save
+            self._save_persisted_data()
             
-        k = k or settings.top_k_retrieval
-        max_attempts = 3
-        attempt = 0
-        
-        while attempt < max_attempts:
-            try:
-                attempt += 1
-                self.logger.info(f"[SEARCH] Documentation search attempt {attempt}/{max_attempts}")
-                
-                # Buscar primero sin filtros pero con más resultados
-                results = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: self.vectorstore.similarity_search(query, k=k*3)  # Buscar más resultados para filtrar
-                    ),
-                    timeout=5.0
-                )
-                
-                # Filtrar resultados basados en la fuente o metadata
-                filtered_results = []
-                for doc in results:
-                    source = str(doc.metadata.get("source", "")).lower()
-                    if "documentation" in source or "normativa" in source:
-                        filtered_results.append(doc)
-                        continue
-                        
-                    # Verificar metadata
-                    metadata = doc.metadata
-                    if any(metadata.get(key) == "documentation" 
-                          for key in ['type', 'doc_type', 'source_type', 'document_type', 'category']):
-                        filtered_results.append(doc)
-                
-                # Si encontramos resultados, devolver los k mejores
-                if filtered_results:
-                    filtered_results = filtered_results[:k]  # Limitar al número solicitado
-                    self.logger.info(f"[SEARCH] Found {len(filtered_results)} documentation documents")
-                    return filtered_results
-                
-                # Si no hay resultados, intentar búsqueda más específica
-                try:
-                    # Usar múltiples queries relacionadas
-                    queries = [
-                        query,
-                        f"{query} sql",
-                        f"{query} teradata",
-                        f"{query} standard",
-                        f"{query} normativa"
-                    ]
-                    
-                    for search_query in queries:
-                        results = await asyncio.wait_for(
-                            asyncio.get_event_loop().run_in_executor(
-                                None,
-                                lambda: self._safe_similarity_search(
-                                    search_query, 
-                                    k,
-                                    {"type": "documentation"}
-                                )
-                            ),
-                            timeout=3.0
-                        )
-                        if results:
-                            self.logger.info(f"[SEARCH] Found {len(results)} docs with query: {search_query}")
-                            return results
-                            
-                except Exception as search_error:
-                    self.logger.warning(f"[SEARCH] Search error: {search_error}")
-                
-                self.logger.warning(f"[SEARCH] No results in attempt {attempt}, retrying...")
-                await asyncio.sleep(1)
-                
-            except asyncio.TimeoutError:
-                self.logger.warning(f"[SEARCH] Timeout in attempt {attempt}")
-                if attempt < max_attempts:
-                    await asyncio.sleep(1)
-                continue
-            except Exception as e:
-                self.logger.error(f"[SEARCH] Error in attempt {attempt}: {e}")
-                if attempt < max_attempts:
-                    await asyncio.sleep(1)
-                continue
-        
-        self.logger.warning("[SEARCH] All search attempts failed - returning empty")
-        return []
-    
-    async def search_ok_examples_by_category(self, category: str, k: int = 5) -> List[Document]:
-        """Search for OK examples in a specific category."""
-        if not self.vectorstore:
-            self.logger.warning("Vector store not initialized - returning empty results")
-            return []
-            
-        try:
-            # Simple timeout-protected search
-            results = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, 
-                    lambda: self._safe_similarity_search(
-                        f"{category} SQL best practices",
-                        k,
-                        {
-                            "type": "sql_example",
-                            "example_type": "OK",
-                            "category": category
-                        }
-                    )
-                ),
-                timeout=5.0  # Reduced timeout
-            )
-            
-            self.logger.debug(f"Found {len(results)} OK examples for category {category}")
-            return results
-            
-        except asyncio.TimeoutError:
-            self.logger.warning(f"Search timeout for OK examples in category {category} - returning empty results")
-            return []
-        except Exception as e:
-            self.logger.error(f"Error searching OK examples for category {category}: {e}")
-            return []
-    
-    async def search_with_score(self, query: str, k: int = None, 
-                               score_threshold: float = None) -> List[tuple]:
-        """Search with similarity scores."""
-        if not self.vectorstore:
-            raise ValueError("Vector store not initialized")
-            
-        k = k or settings.top_k_retrieval
-        score_threshold = score_threshold or settings.similarity_threshold
-        
-        try:
-            # Perform similarity search with scores
-            results = self.vectorstore.similarity_search_with_score(query, k=k)
-            
-            # Filter by score threshold
-            filtered_results = [
-                (doc, score) for doc, score in results 
-                if score >= score_threshold
-            ]
-            
-            self.logger.debug(
-                f"Found {len(filtered_results)} results above threshold {score_threshold}"
-            )
-            return filtered_results
+            self.logger.info("[DOCS] SUCCESS Knowledge base loaded successfully!")
             
         except Exception as e:
-            self.logger.error(f"Error searching with scores: {e}")
-            return []
-    
-    async def get_related_pairs(self, query: str) -> Dict[str, List[Document]]:
-        """Get related OK/NOK pairs for a query."""
-        try:
-            # Search for related examples
-            all_results = await self.search_similar_examples(query, k=20)
-            
-            # Group by category and example number
-            pairs = {}
-            for doc in all_results:
-                metadata = doc.metadata
-                category = metadata.get("category", "unknown")
-                example_num = metadata.get("example_number", "unknown")
-                example_type = metadata.get("example_type", "unknown")
-                
-                key = f"{category}_{example_num}"
-                if key not in pairs:
-                    pairs[key] = {"OK": [], "NOK": []}
-                    
-                pairs[key][example_type].append(doc)
-            
-            # Filter to only complete pairs
-            complete_pairs = {
-                key: pair for key, pair in pairs.items()
-                if pair["OK"] and pair["NOK"]
-            }
-            
-            self.logger.debug(f"Found {len(complete_pairs)} complete OK/NOK pairs")
-            return complete_pairs
-            
-        except Exception as e:
-            self.logger.error(f"Error getting related pairs: {e}")
-            return {}
-    
-    def reset_vector_store(self) -> None:
-        """Reset the vector store (delete all data)."""
-        try:
-            if self.vectorstore:
-                self.vectorstore.delete_collection()
-                
-            # Remove persist directory
-            if self.persist_directory.exists():
-                import shutil
-                shutil.rmtree(self.persist_directory)
-                
-            self.logger.info("Vector store reset successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Error resetting vector store: {e}")
+            self.logger.error(f"[DOCS] ERROR Error loading knowledge base: {e}")
             raise
     
-    async def _get_collection_count(self) -> int:
-        """Get the number of documents in the collection."""
+    async def add_documents(self, documents: List[Document]) -> None:
+        """Add documents to the vector store with enhanced processing."""
+        await self._add_documents_fast(documents, "user_documents", batch_size=5)
+    
+    async def similarity_search_with_score(
+        self, 
+        query: str, 
+        k: int = 4,
+        score_threshold: float = -1.0,  # Threshold más permisivo por defecto
+        filter_dict: Optional[Dict[str, Any]] = None
+    ) -> List[Tuple[Document, float]]:
+        """
+        Search for similar documents with scores and optional filtering.
+        Enhanced version with filtering support and improved threshold.
+        """
         try:
-            if not self.vectorstore:
-                return 0
-                
-            # Use ChromaDB's count method with timeout protection
-            count = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, 
-                    lambda: self.vectorstore._collection.count()
-                ),
-                timeout=5.0  # 5 second timeout
-            )
-            return count
+            if not self.documents or self.embeddings is None:
+                self.logger.warning("[SEARCH] WARNING No documents available for search")
+                return []
             
-        except asyncio.TimeoutError:
-            self.logger.warning("Timeout getting collection count - assuming empty")
-            return 0
+            # Ensure embedding model is loaded
+            self._ensure_embedding_model()
+            
+            # Calculate query embedding
+            query_embedding = self._embedding_model.encode([query])
+            
+            # Validate embedding dimensions
+            if query_embedding.shape[1] != self.embeddings.shape[1]:
+                self.logger.error(f"[SEARCH] ERROR Dimension mismatch: query {query_embedding.shape[1]} vs stored {self.embeddings.shape[1]}")
+                return []
+            
+            # Calculate cosine similarities efficiently
+            # Normalize embeddings (L2 normalization)
+            embeddings_norm = self.embeddings / (np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-8)
+            query_norm = query_embedding / (np.linalg.norm(query_embedding, axis=1, keepdims=True) + 1e-8)
+            
+            # Cosine similarity = normalized_embeddings · normalized_query
+            similarities = np.dot(embeddings_norm, query_norm.T).flatten()
+            
+            # Ensure similarities are in valid range [-1, 1]
+            similarities = np.clip(similarities, -1.0, 1.0)
+            
+            # Get top k results
+            top_indices = np.argsort(similarities)[::-1][:k * 2]  # Get more for filtering
+            
+            # Build results with filtering
+            results = []
+            for idx in top_indices:
+                score = float(similarities[idx])
+                
+                if score >= score_threshold:
+                    metadata = self.metadata[idx] if idx < len(self.metadata) else {}
+                    
+                    # Apply filter if provided
+                    if filter_dict:
+                        match = all(metadata.get(key) == value for key, value in filter_dict.items())
+                        if not match:
+                            continue
+                    
+                    document = Document(
+                        page_content=self.documents[idx],
+                        metadata=metadata
+                    )
+                    results.append((document, score))
+                    
+                    # Stop when we have enough results
+                    if len(results) >= k:
+                        break
+            
+            self.logger.info(f"[SEARCH] FOUND Found {len(results)} results for query: '{query[:50]}...'")
+            return results
+            
         except Exception as e:
-            self.logger.warning(f"Error getting collection count: {e} - assuming empty")
-            return 0
+            self.logger.error(f"[SEARCH] ERROR Search error: {e}")
+            return []
+    
+    async def similarity_search(
+        self, 
+        query: str, 
+        k: int = 4, 
+        filter_dict: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> List[Document]:
+        """Search for similar documents (compatibility method)."""
+        results = await self.similarity_search_with_score(query, k, filter_dict=filter_dict)
+        return [doc for doc, score in results]
     
     def _safe_similarity_search(self, query: str, k: int, filter_dict: dict = None) -> List[Document]:
-        """Perform similarity search with error handling and progressive loading awareness."""
+        """Synchronous similarity search with error handling."""
         try:
-            if not self.vectorstore:
-                self.logger.info("[SEARCH] Vector store not ready - returning empty results")
+            # Check if we're in an async context
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in async context - cannot use asyncio.run()
+                # Log warning and return empty results
+                self.logger.warning(f"[SEARCH] WARNING Cannot run sync search in async context for query: '{query[:50]}...'")
                 return []
-            
-            # Quick readiness check
-            try:
-                collection_name = self.vectorstore._collection.name
-                if not collection_name:
-                    return []
-            except Exception:
-                # Collection may still be initializing
-                self.logger.info("[SEARCH] Collection still initializing - returning empty results")
-                return []
-            
-            # Get document count with timeout protection
-            try:
-                count_future = asyncio.get_event_loop().run_in_executor(
-                    None, lambda: self.vectorstore._collection.count()
-                )
-                count = asyncio.get_event_loop().run_until_complete(
-                    asyncio.wait_for(count_future, timeout=2.0)
-                )
-                
-                if count == 0:
-                    self.logger.info("[SEARCH] Collection empty - may still be loading documents")
-                    return []
-                    
-                self.logger.debug(f"[SEARCH] Collection has {count} documents available")
-                
-            except (asyncio.TimeoutError, Exception):
-                # If count check fails, try search anyway with reduced k
-                self.logger.debug("[SEARCH] Count check failed - trying search with reduced results")
-                k = min(k, 3)  # Reduce results for safety
-            
-            # Perform search with error recovery
-            try:
-                results = self.vectorstore.similarity_search(
-                    query, k=k, filter=filter_dict
-                )
-                
-                self.logger.debug(f"[SEARCH] Found {len(results)} results for query")
-                return results
-                
-            except Exception as search_error:
-                # Fallback: try with minimal parameters
-                self.logger.warning(f"[SEARCH] Primary search failed: {search_error}")
-                try:
-                    # Fallback search without filters
-                    fallback_results = self.vectorstore.similarity_search(query, k=min(k, 2))
-                    self.logger.info(f"[SEARCH] Fallback search returned {len(fallback_results)} results")
-                    return fallback_results
-                except Exception:
-                    self.logger.warning("[SEARCH] Even fallback search failed - returning empty")
-                    return []
-            
+            else:
+                # Safe to run async method in sync context
+                return asyncio.run(self.similarity_search(query, k, filter_dict=filter_dict))
         except Exception as e:
-            self.logger.warning(f"[SEARCH] Safe similarity search failed: {e} - returning empty")
+            self.logger.error(f"[SEARCH] ERROR Safe search error: {e}")
             return []
     
-    async def _async_safe_search(self, query: str, k: int, filter_dict: dict = None) -> List[Document]:
-        """Async version of safe search that can be cancelled quickly."""
+    async def _get_collection_count(self) -> int:
+        """Get count of documents in collection with timeout protection."""
         try:
-            # First check if we can do a quick status check
-            if not self.vectorstore:
-                return []
+            return len(self.documents)
+        except Exception as e:
+            self.logger.warning(f"[COUNT] WARNING Error getting count: {e}")
+            return 0
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get comprehensive vector store statistics."""
+        return {
+            "total_documents": len(self.documents),
+            "embedding_dimensions": self.embeddings.shape[1] if self.embeddings is not None else 0,
+            "collection_name": self.collection_name,
+            "persist_directory": str(self.persist_directory),
+            "embedding_model": self._embedding_model_name,
+            "initialized": self._initialized,
+            "loading_started": self._loading_started,
+            "has_embeddings": self.embeddings is not None,
+            "metadata_count": len(self.metadata),
+            "batch_size": self.batch_size,
+            "chunk_size": self.chunk_size
+        }
+    
+    def reset_vector_store(self):
+        """Reset the vector store completely."""
+        try:
+            self.logger.info("[RESET] DELETING Resetting vector store...")
             
-            # Run the potentially blocking search in executor with very tight control
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, 
-                self._safe_similarity_search, 
-                query, k, filter_dict
-            )
-            return result
+            # Clear in-memory data
+            self.documents = []
+            self.embeddings = None
+            self.metadata = []
+            self.clear_embedding_cache()
+            
+            # Remove persisted files
+            for file_path in [self.documents_file, self.embeddings_file, self.metadata_file]:
+                if file_path.exists():
+                    file_path.unlink()
+            
+            # Reset flags
+            self._initialized = False
+            self._loading_started = False
+            
+            self.logger.info("[RESET] SUCCESS Vector store reset successfully")
             
         except Exception as e:
-            self.logger.warning(f"Async safe search failed: {e}")
-            return []
+            self.logger.error(f"[RESET] ERROR Error resetting vector store: {e}")
+            raise
+
+
+# For compatibility with existing code
+class VectorStore:
+    """
+    Compatibility wrapper for existing code.
+    Enhanced version with better method forwarding.
+    """
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self._corporate_store = None
+    
+    @property
+    def embeddings(self):
+        """Dummy property for compatibility."""
+        return None
+    
+    def clear_embedding_cache(self):
+        """Clear embedding cache."""
+        if self._corporate_store:
+            self._corporate_store.clear_embedding_cache()
+    
+    async def initialize(self) -> None:
+        """Initialize the corporate vector store."""
+        self.logger.info("[CORPORATE] INITIALIZING Initializing Enhanced Corporate Vector Store...")
+        
+        self._corporate_store = CorporateVectorStore()
+        await self._corporate_store.initialize()
+        
+        self.logger.info("[CORPORATE] SUCCESS Enhanced Corporate Vector Store ready!")
+    
+    async def load_knowledge_base(self) -> None:
+        """Load knowledge base."""
+        if self._corporate_store:
+            await self._corporate_store.load_knowledge_base()
+    
+    async def similarity_search_with_score(
+        self, 
+        query: str, 
+        k: int = 4, 
+        score_threshold: float = 0.0,
+        filter_dict: Optional[Dict[str, Any]] = None
+    ) -> List[Tuple[Document, float]]:
+        """Search with scores."""
+        if self._corporate_store:
+            return await self._corporate_store.similarity_search_with_score(
+                query, k, score_threshold, filter_dict
+            )
+        return []
+    
+    async def similarity_search(
+        self, 
+        query: str, 
+        k: int = 4, 
+        filter_dict: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> List[Document]:
+        """Search for similar documents."""
+        if self._corporate_store:
+            return await self._corporate_store.similarity_search(query, k, filter_dict, **kwargs)
+        return []
+    
+    def _safe_similarity_search(self, query: str, k: int, filter_dict: dict = None) -> List[Document]:
+        """Safe synchronous search."""
+        if self._corporate_store:
+            return self._corporate_store._safe_similarity_search(query, k, filter_dict)
+        return []
+    
+    async def add_documents(self, documents: List[Document]) -> None:
+        """Add documents."""
+        if self._corporate_store:
+            await self._corporate_store.add_documents(documents)
+    
+    async def _get_collection_count(self) -> int:
+        """Get collection count."""
+        if self._corporate_store:
+            return await self._corporate_store._get_collection_count()
+        return 0
+    
+    async def search_similar_examples(self, query: str, k: int = None) -> List[Document]:
+        """Search for similar SQL examples - compatibility method."""
+        if self._corporate_store:
+            from config.settings import settings
+            k = k or getattr(settings, 'top_k_retrieval', 4)
+            
+            # Use similarity search and filter for SQL examples
+            results = await self._corporate_store.similarity_search(query, k * 2)  # Get more to filter
+            
+            # Filter for SQL examples based on metadata
+            sql_examples = []
+            for doc in results:
+                if doc.metadata.get('type') == 'sql_example' or 'SQL' in doc.page_content:
+                    sql_examples.append(doc)
+                    if len(sql_examples) >= k:
+                        break
+            
+            return sql_examples[:k]
+        return []
+    
+    async def search_documentation(self, query: str, k: int = None) -> List[Document]:
+        """Search for relevant documentation - compatibility method.""" 
+        if self._corporate_store:
+            from config.settings import settings
+            k = k or getattr(settings, 'top_k_retrieval', 4)
+            
+            # Use similarity search and filter for documentation
+            results = await self._corporate_store.similarity_search(query, k * 2)
+            
+            # Filter for documentation based on metadata
+            docs = []
+            for doc in results:
+                if doc.metadata.get('type') == 'documentation' or doc.metadata.get('source', '').endswith('.txt'):
+                    docs.append(doc)
+                    if len(docs) >= k:
+                        break
+            
+            return docs[:k]
+        return []
+    
+    async def search_ok_examples_by_category(self, query: str, category: str = None, k: int = None) -> List[Document]:
+        """Search for OK SQL examples by category - compatibility method."""
+        if self._corporate_store:
+            from config.settings import settings
+            k = k or getattr(settings, 'top_k_retrieval', 4)
+            
+            # Use similarity search and filter for OK examples
+            results = await self._corporate_store.similarity_search(query, k * 3)
+            
+            # Filter for OK examples and specific category if provided
+            ok_examples = []
+            for doc in results:
+                metadata = doc.metadata
+                is_ok = metadata.get('example_type') == 'OK' or metadata.get('label') == 'OK' or 'OK' in doc.page_content
+                matches_category = category is None or metadata.get('category') == category
+                
+                if is_ok and matches_category:
+                    ok_examples.append(doc)
+                    if len(ok_examples) >= k:
+                        break
+            
+            return ok_examples[:k]
+        return []
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics."""
+        if self._corporate_store:
+            return self._corporate_store.get_stats()
+        return {}
+    
+    def reset_vector_store(self):
+        """Reset vector store."""
+        if self._corporate_store:
+            self._corporate_store.reset_vector_store()
+
+
+# Test function for validation
+async def test_enhanced_corporate_vector_store():
+    """Test the enhanced corporate vector store."""
+    
+    print("TESTING ENHANCED CORPORATE VECTOR STORE")
+    print("=" * 60)
+    
+    try:
+        # Test direct corporate store
+        print("\n1. Testing Enhanced CorporateVectorStore...")
+        store = CorporateVectorStore()
+        await store.initialize()
+        
+        # Test stats
+        stats = store.get_stats()
+        print(f"STATS Initial stats: {len(stats)} fields")
+        
+        # Test compatibility wrapper
+        print("\n2. Testing Enhanced VectorStore wrapper...")
+        wrapper = VectorStore()
+        await wrapper.initialize()
+        
+        # Test collection count method
+        count = await wrapper._get_collection_count()
+        print(f"COUNT Collection count: {count}")
+        
+        wrapper_stats = wrapper.get_stats()
+        print(f"WRAPPER Wrapper stats: {wrapper_stats}")
+        
+        print("\nSUCCESS ALL ENHANCED TESTS PASSED!")
+        return True
+        
+    except Exception as e:
+        print(f"\nFAILED ENHANCED TEST FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+if __name__ == "__main__":
+    import asyncio
+    success = asyncio.run(test_enhanced_corporate_vector_store())
+    exit(0 if success else 1)

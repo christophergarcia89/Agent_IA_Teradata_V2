@@ -1,28 +1,28 @@
-# Copilot Instructions
+# Instrucciones de Copilot
 
-<!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+<!-- Usa este archivo para proporcionar instrucciones personalizadas específicas del espacio de trabajo a Copilot. Para más detalles, visita https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
 
-## Project Context
-This is a LangGraph LCEL project for Teradata SQL query review and optimization using RAG (Retrieval Augmented Generation).
+## Contexto del Proyecto
+Este es un proyecto LangGraph LCEL para revisión y optimización de consultas SQL de Teradata usando RAG (Generación Aumentada por Recuperación).
 
-## Key Components
-- **RAG System**: Uses internal knowledge base with SQL standards and examples
-- **Three Agents**: 
-  1. SQL Query Reviewer (uses RAG for standards compliance)
-  2. Query Explain Generator (uses teradata-mcp-server)
-  3. Explain Interpreter (provides optimization suggestions)
-- **Knowledge Base**: Contains OK/NOK SQL examples and documentation
-- **LangGraph**: Orchestrates the multi-agent workflow
+## Componentes Clave
+- **Sistema RAG**: Utiliza base de conocimiento interna con estándares SQL y ejemplos
+- **Tres Agentes**: 
+  1. Revisor de Consultas SQL (usa RAG para cumplimiento de estándares)
+  2. Generador de Explicaciones de Consultas (usa teradata-mcp-server)
+  3. Intérprete de Explicaciones (proporciona sugerencias de optimización)
+- **Base de Conocimiento**: Contiene ejemplos SQL OK/NOK y documentación
+- **LangGraph**: Orquesta el flujo de trabajo multi-agente
 
-## Coding Guidelines
-- Follow Python best practices and type hints
-- Use LangChain Expression Language (LCEL) for agent chains
-- Implement proper error handling for database connections
-- Use async/await patterns where appropriate
-- Follow the established project structure in `/src`
+## Directrices de Codificación
+- Seguir las mejores prácticas de Python y anotaciones de tipo
+- Usar LangChain Expression Language (LCEL) para cadenas de agentes
+- Implementar manejo adecuado de errores para conexiones de base de datos
+- Usar patrones async/await donde sea apropiado
+- Seguir la estructura de proyecto establecida en `/src`
 
-## Standards
-- SQL examples marked as "OK" represent correct standards
-- SQL examples marked as "NOK" represent violations that need correction
-- Each NOK example has a corresponding OK version for reference
-- Focus on Teradata-specific SQL optimizations and best practices
+## Estándares
+- Los ejemplos SQL marcados como "OK" representan estándares correctos
+- Los ejemplos SQL marcados como "NOK" representan violaciones que necesitan corrección
+- Cada ejemplo NOK tiene una versión OK correspondiente para referencia
+- Enfocarse en optimizaciones SQL específicas de Teradata y mejores prácticas

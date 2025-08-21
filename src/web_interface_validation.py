@@ -11,9 +11,14 @@ Muestra las salidas individuales y detalladas de cada agente:
 import asyncio
 import logging
 import uuid
+import sys
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+
+# Add project root to Python path for imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -23,6 +28,7 @@ from src.agents.sql_reviewer import SQLReviewerAgent, SQLReviewResult
 from src.agents.explain_generator import EnhancedExplainGenerator, EnhancedExplainResult
 from src.agents.explain_interpreter import ExplainInterpreterAgent, ExplainAnalysis
 from src.rag.vector_store import VectorStore
+from src.utils.logging_utils import setup_logging
 from src.utils.logging_utils import setup_logging
 
 # Setup logging
@@ -336,14 +342,14 @@ async def get_interface():
             <h1>Validación Detallada de Agentes</h1>
             
             <div class="header-info">
-                <h3>[SYSTEM] Sistema Multi-Agente para Análisis SQL</h3>
-                <p><strong>1. [REVIEWER] SQL Reviewer Agent:</strong> Revisa queries usando RAG con base de conocimiento interna</p>
-                <p><strong>2. [EXPLAIN] Explain Generator Agent:</strong> Genera planes EXPLAIN usando MCP Server y Teradata</p>
-                <p><strong>3. [INTERPRETER] Explain Interpreter Agent:</strong> Interpreta planes y proporciona sugerencias de optimización</p>
+                <h3>Sistema Multi-Agente para Análisis SQL</h3>
+                <p><strong>1. SQL Reviewer Agent:</strong> Revisa queries usando RAG con base de conocimiento interna</p>
+                <p><strong>2. Explain Generator Agent:</strong> Genera planes EXPLAIN usando MCP Server y Teradata</p>
+                <p><strong>3. Explain Interpreter Agent:</strong> Interpreta planes y proporciona sugerencias de optimización</p>
             </div>
             
             <div class="query-section">
-                <label for="queryInput">[INPUT] Ingresa tu consulta SQL para análisis detallado:</label>
+                <label for="queryInput">Ingresa tu consulta SQL para análisis detallado:</label>
                 <textarea id="queryInput" placeholder="Ejemplo:
 SELECT 
     Campo1 AS Alias1,
@@ -355,7 +361,7 @@ WHERE
     Campo1 = 'Valor1' 
     AND Campo2 > 100;"></textarea>
                 
-                <button class="analyze-btn" onclick="analyzeQuery()">[ANALYZE] Analizar con Validación Detallada</button>
+                <button class="analyze-btn" onclick="analyzeQuery()">Analizar con Validación Detallada</button>
             </div>
             
             <div id="results" class="results">
@@ -414,7 +420,7 @@ WHERE
                     `;
                 } finally {
                     btn.disabled = false;
-                    btn.textContent = '[ANALYZE] Analizar con Validación Detallada';
+                    btn.textContent = 'Analizar con Validación Detallada';
                 }
             }
 
@@ -422,24 +428,24 @@ WHERE
                 const results = document.getElementById('results');
                 
                 let html = `
-                    <h2>[RESULTS] Resultados Detallados de Análisis</h2>
+                    <h2>Resultados Detallados de Análisis</h2>
                     <div class="agent-details">
                         <div class="detail-item">
-                            <span class="detail-label">[ID] Query ID:</span>
+                            <span class="detail-label">Query ID:</span>
                             <span class="detail-value">${data.query_id}</span>
                         </div>
                         <div class="detail-item">
-                            <span class="detail-label">[TIMESTAMP] Timestamp:</span>
+                            <span class="detail-label">Timestamp:</span>
                             <span class="detail-value">${data.timestamp}</span>
                         </div>
                         <div class="detail-item">
-                            <span class="detail-label">[TIME] Tiempo Total:</span>
+                            <span class="detail-label">Tiempo Total:</span>
                             <span class="detail-value">${data.total_processing_time.toFixed(2)}s</span>
                         </div>
                     </div>
                     
                     <div class="code-block">
-                        <strong>[QUERY] Query Original:</strong><br>
+                        <strong>Query Original:</strong><br>
                         ${escapeHtml(data.original_query)}
                     </div>
                 `;
@@ -447,7 +453,7 @@ WHERE
                 // Agent outputs
                 data.agents_output.forEach((agent, index) => {
                     const statusClass = agent.success ? 'success' : 'error';
-                    const statusIcon = agent.success ? '[SUCCESS]' : '[ERROR]';
+                    const statusIcon = agent.success ? 'SUCCESS' : 'ERROR';
                     
                     html += `
                         <div class="agent-output ${statusClass}">
@@ -458,7 +464,7 @@ WHERE
                     `;
                     
                     if (agent.error_message) {
-                        html += `<div class="agent-details"><p><strong>[ERROR] Error:</strong> ${agent.error_message}</p></div>`;
+                        html += `<div class="agent-details"><p><strong>Error:</strong> ${agent.error_message}</p></div>`;
                     }
                     
                     html += generateAgentDetails(agent.agent_name, agent.output_data);
@@ -468,7 +474,7 @@ WHERE
                 // Final summary
                 html += `
                     <div class="final-summary">
-                        <h3>[SUMMARY] Resumen Final del Análisis</h3>
+                        <h3>Resumen Final del Análisis</h3>
                         <div class="summary-grid">
                 `;
 
@@ -507,11 +513,11 @@ WHERE
             function generateReviewerDetails(data) {
                 let html = `
                     <div class="detail-item">
-                        <span class="detail-label">[COMPLIANCE] Cumple Estándares:</span>
+                        <span class="detail-label">Cumple Estándares:</span>
                         <span class="detail-value">${data.is_compliant ? 'Sí' : 'No'}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">[CONFIDENCE] Confianza:</span>
+                        <span class="detail-label">Confianza:</span>
                         <span class="detail-value">${(data.confidence_score * 100).toFixed(1)}%</span>
                     </div>
                 `;
@@ -519,7 +525,7 @@ WHERE
                 if (data.violations && data.violations.length > 0) {
                     html += `
                         <div class="detail-item">
-                            <span class="detail-label">[VIOLATIONS] Violaciones:</span>
+                            <span class="detail-label">Violaciones:</span>
                             <div class="detail-value">
                                 <ul>
                                     ${data.violations.map(v => `<li>${v}</li>`).join('')}
@@ -530,13 +536,13 @@ WHERE
                 }
                 
                 if (data.corrected_query) {
-                    html += `<div class="code-block"><strong>[CORRECTED] Query Corregido:</strong><br>${escapeHtml(data.corrected_query)}</div>`;
+                    html += `<div class="code-block"><strong>Query Corregido:</strong><br>${escapeHtml(data.corrected_query)}</div>`;
                 }
                 
                 if (data.recommendations && data.recommendations.length > 0) {
                     html += `
                         <div class="detail-item">
-                            <span class="detail-label">[RECOMMENDATIONS] Recomendaciones:</span>
+                            <span class="detail-label">Recomendaciones:</span>
                             <div class="detail-value">
                                 <ul>
                                     ${data.recommendations.map(r => `<li>${r}</li>`).join('')}
@@ -552,27 +558,27 @@ WHERE
             function generateGeneratorDetails(data) {
                 let html = `
                     <div class="detail-item">
-                        <span class="detail-label">[FALLBACK] Usó Fallback:</span>
+                        <span class="detail-label">Usó Fallback:</span>
                         <span class="detail-value">${data.fallback_used ? 'Sí' : 'No'}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">[TIMEOUT] Timeout:</span>
+                        <span class="detail-label">Timeout:</span>
                         <span class="detail-value">${data.timeout_occurred ? 'Sí' : 'No'}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">[TOOLS] Herramientas MCP:</span>
+                        <span class="detail-label">Herramientas MCP:</span>
                         <span class="detail-value">${data.mcp_tools_used ? data.mcp_tools_used.length : 0}</span>
                     </div>
                 `;
                 
                 if (data.explain_plan) {
-                    html += `<div class="code-block"><strong>[PLAN] Plan EXPLAIN:</strong><br>${escapeHtml(data.explain_plan.substring(0, 1000))}${data.explain_plan.length > 1000 ? '...' : ''}</div>`;
+                    html += `<div class="code-block"><strong>Plan EXPLAIN:</strong><br>${escapeHtml(data.explain_plan.substring(0, 1000))}${data.explain_plan.length > 1000 ? '...' : ''}</div>`;
                 }
                 
                 if (data.warnings && data.warnings.length > 0) {
                     html += `
                         <div class="detail-item">
-                            <span class="detail-label">[WARNINGS] Advertencias:</span>
+                            <span class="detail-label">Advertencias:</span>
                             <div class="detail-value">
                                 <ul>
                                     ${data.warnings.map(w => `<li>${w}</li>`).join('')}
@@ -588,15 +594,15 @@ WHERE
             function generateInterpreterDetails(data) {
                 let html = `
                     <div class="detail-item">
-                        <span class="detail-label">[PERFORMANCE] Performance:</span>
+                        <span class="detail-label">Performance:</span>
                         <span class="detail-value">${data.overall_performance}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">[COMPLEXITY] Complejidad:</span>
+                        <span class="detail-label">Complejidad:</span>
                         <span class="detail-value">${data.query_complexity}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">[IMPROVEMENT] Potencial Mejora:</span>
+                        <span class="detail-label">Potencial Mejora:</span>
                         <span class="detail-value">${data.estimated_improvement}</span>
                     </div>
                 `;
@@ -604,7 +610,7 @@ WHERE
                 if (data.bottlenecks && data.bottlenecks.length > 0) {
                     html += `
                         <div class="detail-item">
-                            <span class="detail-label">[BOTTLENECKS] Cuellos de Botella:</span>
+                            <span class="detail-label">Cuellos de Botella:</span>
                             <div class="detail-value">
                                 <ul class="suggestions-list">
                     `;
@@ -615,7 +621,7 @@ WHERE
                         } else {
                             html += `
                                 <li class="suggestion-item priority-${bottleneck.priority.toLowerCase()}">
-                                    <strong>[CRITICAL] ${bottleneck.issue}</strong><br>
+                                    <strong>CRITICAL ${bottleneck.issue}</strong><br>
                                     <em>${bottleneck.description}</em><br>
                                     <small><strong>Prioridad:</strong> ${bottleneck.priority} | <strong>Impacto:</strong> ${bottleneck.impact}</small><br>
                                     <small><strong>Implementación:</strong> ${bottleneck.implementation}</small>
@@ -633,14 +639,14 @@ WHERE
                 if (data.suggestions && data.suggestions.length > 0) {
                     html += `
                         <div class="detail-item">
-                            <span class="detail-label">[SUGGESTIONS] Sugerencias de Optimización:</span>
+                            <span class="detail-label">Sugerencias de Optimización:</span>
                             <div class="detail-value">
                                 <ul class="suggestions-list">
                     `;
                     data.suggestions.forEach(suggestion => {
                         html += `
                             <li class="suggestion-item priority-${suggestion.priority.toLowerCase()}">
-                                <strong>[OPTIMIZE] ${suggestion.issue}</strong><br>
+                                <strong>OPTIMIZE ${suggestion.issue}</strong><br>
                                 <em>${suggestion.description}</em><br>
                                 <small><strong>Prioridad:</strong> ${suggestion.priority} | <strong>Impacto:</strong> ${suggestion.impact}</small><br>
                                 <small><strong>Implementación:</strong> ${suggestion.implementation}</small>
@@ -657,10 +663,10 @@ WHERE
                 if (data.teradata_specific_notes && data.teradata_specific_notes.length > 0) {
                     html += `
                         <div class="detail-item">
-                            <span class="detail-label">[TERADATA] Notas Específicas de Teradata:</span>
+                            <span class="detail-label">Notas Específicas de Teradata:</span>
                             <div class="detail-value">
                                 <ul>
-                                    ${data.teradata_specific_notes.map(note => `<li>[NOTE] ${note}</li>`).join('')}
+                                    ${data.teradata_specific_notes.map(note => `<li>NOTE ${note}</li>`).join('')}
                                 </ul>
                             </div>
                         </div>
@@ -717,7 +723,7 @@ where departamento = 'IT';`
                 const container = document.querySelector('.query-section');
                 const samplesDiv = document.createElement('div');
                 samplesDiv.style.marginTop = '15px';
-                samplesDiv.innerHTML = '<p><strong>[EXAMPLES] Queries de ejemplo:</strong></p>';
+                samplesDiv.innerHTML = '<p><strong>Queries de ejemplo:</strong></p>';
                 
                 sampleQueries.forEach((query, index) => {
                     const btn = document.createElement('button');
@@ -794,8 +800,8 @@ async def analyze_detailed(request: QueryRequest) -> DetailedResponse:
         # Agent 2: Explain Generator
         agent_start = datetime.now()
         try:
-            corrected_query = review_result.corrected_query if 'review_result' in locals() else request.query
-            explain_result = await explain_generator.generate_explain_plan(corrected_query)
+            # Importante: Usar la query original para el EXPLAIN, no la corregida
+            explain_result = await explain_generator.generate_explain_plan(request.query)
             agent_time = (datetime.now() - agent_start).total_seconds()
             
             logger.info(f"[WEB] EXPLAIN result success: {explain_result.success}")
@@ -939,4 +945,4 @@ async def analyze_detailed(request: QueryRequest) -> DetailedResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+    uvicorn.run(app, host="localhost", port=8006)

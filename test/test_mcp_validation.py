@@ -1,6 +1,5 @@
 """
-Test de validación MCP con configuración validada por test_direct_teradata_basic.py
-Usa la IP 10.33.84.36 que ya probamos que funciona correctamente.
+Test de validación MCP
 """
 
 import asyncio
@@ -127,6 +126,13 @@ async def validate_mcp_with_working_config():
                                     tool_name = tool.get('name', 'Sin nombre')
                                     tool_desc = tool.get('description', 'Sin descripción')[:50]
                                     print(f"      - {tool_name}: {tool_desc}...")
+                    elif isinstance(available_tools, dict):
+                        # Handle case where safe_operation returns a dict instead of list
+                        if available_tools.get('success', False):
+                            tools_list = available_tools.get('content', [])
+                            print(f"   🔧 Tools disponibles: {len(tools_list) if isinstance(tools_list, list) else 'N/A'}")
+                        else:
+                            print(f"   ❌ Error obteniendo tools: {available_tools.get('error', 'Error desconocido')}")
                     else:
                         print(f"   🔧 Respuesta de tools: {type(available_tools)}")
                         

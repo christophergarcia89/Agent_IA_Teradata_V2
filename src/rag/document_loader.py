@@ -1,6 +1,5 @@
 """
-Document loader for RAG system.
-Loads SQL examples and documentation from the knowledge base.
+Carga ejemplos SQL y documentación desde la base de conocimiento.
 """
 
 import os
@@ -17,15 +16,14 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 class SQLExample:
     """SQL example with metadata."""
     content: str
-    example_type: str  # "OK" or "NOK"
+    example_type: str  # "OK"/"NOK"
     category: str  # "UPDATE", "CREATE", "SELECT", etc.
     example_number: str
     file_path: str
 
 
 class DocumentLoader:
-    """Loads and processes documents from the knowledge base."""
-    
+        
     def __init__(self, knowledge_base_path: str = "knowledge_base"):
         self.knowledge_base_path = Path(knowledge_base_path)
         self.logger = logging.getLogger(__name__)
@@ -67,8 +65,7 @@ class DocumentLoader:
                     self.logger.error(f"Error loading SQL file {file_path}: {e}")
         
         self.logger.info(f"[SUCCESS] Total loaded: {len(examples)} SQL examples")
-        
-        # Log statistics for debugging
+          
         stats = self.get_example_statistics(examples)
         self.logger.info(f"[STATS] Examples by type - OK: {stats['ok_examples']}, NOK: {stats['nok_examples']}")
         self.logger.info(f"[CATEGORIES] Categories found: {list(stats['categories'].keys())}")
@@ -299,9 +296,8 @@ class DocumentLoader:
                        chunk_overlap: int = 200) -> List[Document]:
         """Split documents into chunks for better retrieval with optimized settings."""
         
-        # Optimize chunk settings based on document count
+        # Optimizar chunk
         if len(documents) > 100:
-            # For large document sets, use smaller chunks for faster processing
             chunk_size = min(chunk_size, 800)
             chunk_overlap = min(chunk_overlap, 150)
             self.logger.info(f"Using optimized chunking for large document set: chunk_size={chunk_size}, overlap={chunk_overlap}")
@@ -319,7 +315,6 @@ class DocumentLoader:
         
         self.logger.info(f"[SUCCESS] Split {len(documents)} documents into {len(chunked_docs)} chunks")
         
-        # Log chunking statistics
         if chunked_docs:
             avg_chunk_size = sum(len(doc.page_content) for doc in chunked_docs) / len(chunked_docs)
             self.logger.debug(f"[STATS] Average chunk size: {avg_chunk_size:.0f} characters")
@@ -330,7 +325,6 @@ class DocumentLoader:
         """Organize examples into OK/NOK pairs for comparison."""
         pairs = {}
         
-        # Group by category and example number
         grouped = {}
         for example in examples:
             # Crear clave que maneje diferentes formatos de número (1, 1A, 1B, etc.)
@@ -339,7 +333,7 @@ class DocumentLoader:
                 grouped[key] = {}
             grouped[key][example.example_type] = example
             
-        # Create pairs
+        # Crear pares
         for key, group in grouped.items():
             if "OK" in group and "NOK" in group:
                 pairs[key] = (group["OK"], group["NOK"])
@@ -371,13 +365,13 @@ class DocumentLoader:
         }
         
         for example in examples:
-            # Count by type
+            # Contar por tipo
             if example.example_type == "OK":
                 stats["ok_examples"] += 1
             elif example.example_type == "NOK":
                 stats["nok_examples"] += 1
             
-            # Count by category
+            # Contar por categoria
             category = example.category
             if category not in stats["categories"]:
                 stats["categories"][category] = {"OK": 0, "NOK": 0}
@@ -385,10 +379,9 @@ class DocumentLoader:
             if example.example_type in ["OK", "NOK"]:
                 stats["categories"][category][example.example_type] += 1
             
-            # Track files
             stats["files_processed"].add(Path(example.file_path).name)
         
-        # Convert set to list for JSON serialization
+        # JSON
         stats["files_processed"] = list(stats["files_processed"])
         
         return stats

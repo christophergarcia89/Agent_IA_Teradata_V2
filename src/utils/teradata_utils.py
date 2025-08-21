@@ -1,5 +1,5 @@
 """
-Teradata database utilities for connection and query execution.
+Teradata database utilities
 """
 
 import logging

@@ -1,5 +1,5 @@
 """
-LangGraph Workflow that orchestrates the three agents for SQL query analysis and optimization.
+Orquestador de flujo de trabajo para la revisión y optimización de consultas SQL.
 """
 
 import logging
@@ -106,7 +106,7 @@ class TeradataWorkflow:
             await self.vector_store.initialize()
             
             # Wait for documents to be completely loaded
-            self.logger.info("⏳ Waiting for document loading to complete...")
+            self.logger.info("Waiting for document loading to complete...")
             
             # Check if documents are already loaded
             doc_count = await self.vector_store._get_collection_count()
@@ -303,13 +303,13 @@ class TeradataWorkflow:
         try:
             self.logger.info("[EXPLAIN] Executing EXPLAIN generation node")
             
-            # Use corrected query if available and valid, otherwise original
-            query_to_explain = state["corrected_query"] if state["corrected_query"].strip() else state["original_query"]
+            # IMPORTANTE: Usar la query original para el EXPLAIN, no la corregida
+            query_to_explain = state["original_query"]
             
             if not query_to_explain.strip():
                 raise ValueError("No valid query available for EXPLAIN generation")
             
-            self.logger.info(f"Generating EXPLAIN for query: {query_to_explain[:100]}...")
+            self.logger.info(f"Generating EXPLAIN for query (ORIGINAL): {query_to_explain[:100]}...")
             
             # Generate EXPLAIN plan with timeout protection
             explain_result = await self.explain_generator.generate_explain(query_to_explain)
@@ -450,15 +450,6 @@ class TeradataWorkflow:
             state["messages"].append({
                 "type": "ai",
                 "content": f"[WARNING] EXPLAIN interpretation failed: {str(e)[:100]}... Workflow will continue with basic recommendations."
-            })
-            
-            return state
-            
-            # Add message
-            state["messages"].append({
-                "type": "ai",
-                "content": f"EXPLAIN analysis completed. Performance: {analysis_result.overall_performance}. "
-                          f"Found {len(analysis_result.suggestions)} optimization suggestions."
             })
             
             return state
